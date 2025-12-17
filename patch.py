@@ -159,9 +159,6 @@ def parse_args():
 
     args = parser.parse_args()
 
-    global compatible_sepolicy
-    compatible_sepolicy=args.compatible_sepolicy
-
     if args.output is None:
         args.output = Path(f'{args.input}.patched')
 
@@ -271,6 +268,10 @@ def run(args: argparse.Namespace, temp_dir: Path):
     else:
         selinux_policies = []
 
+    #To make modules use compatible sepolicy
+    global compatible_sepolicy
+    compatible_sepolicy=args.compatible_sepolicy
+    
     # Inject modules.
     for module in inject_modules:
         module.inject(boot_fs, ext_fs, selinux_policies)
