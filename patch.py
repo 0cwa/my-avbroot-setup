@@ -340,6 +340,8 @@ def main():
         format='\x1b[1m[%(levelname)s] %(message)s\x1b[0m',
     )
 
+    logger.info(f'Provided arguments: {args}')
+    
     with tempfile.TemporaryDirectory() as temp_dir:
         exit_code = 0
 
