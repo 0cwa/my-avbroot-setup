@@ -261,11 +261,22 @@ def run(args: argparse.Namespace, temp_dir: Path):
 
     # Parse SELinux label mappings for use when creating new entries.
     if ext_fs:
-        contexts = filesystem.load_file_contexts(ext_fs['system'].tree /
-            'system' / 'etc' / 'selinux' / 'plat_file_contexts')
+        plat_contexts = filesystem.load_file_contexts(
+            ext_fs['system'].tree / 'system' / 'etc' / 'selinux' / 'plat_file_contexts'
+        )
 
-        for _, fs in ext_fs.items():
-            fs.contexts = contexts
+        for name, fs in ext_fs.items():
+            partition_contexts_path = (
+                fs.tree / name / 'etc' / 'selinux' / f'{name}_file_contexts'
+            )
+
+            if partition_contexts_path.exists():
+                partition_contexts = filesystem.load_file_contexts(
+                    partition_contexts_path
+                )
+                fs.contexts = partition_contexts + plat_contexts
+            else:
+                fs.contexts = plat_contexts
 
     # We only update the precompiled policies and leave the CIL policies alone.
     # Since we're starting from a (hopefully) properly built Android build, we
