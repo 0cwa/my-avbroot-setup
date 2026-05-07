@@ -62,6 +62,10 @@ class CustotaModule(Module):
                 f_temp.close()
 
                 for sepolicy in sepolicies:
+                    if not sepolicy.exists():
+                        logger.warning(f'SELinux policy does not exist: {sepolicy}')
+                        continue
+
                     logger.info(f'Adding Custota SELinux rules: {sepolicy}')
 
                     subprocess.check_call([

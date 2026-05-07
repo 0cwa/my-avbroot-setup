@@ -272,10 +272,17 @@ def run(args: argparse.Namespace, temp_dir: Path):
     # should never run into a situation where the precompiled sepolicy is out of
     # date and needs to be recompiled from the CIL files during boot.
     if need_sepolicies:
-        selinux_policies = [
-            boot_fs['vendor_boot'].tree / 'sepolicy',
-            ext_fs['vendor'].tree / 'etc' / 'selinux' / 'precompiled_sepolicy',
-        ]
+        selinux_policies = []
+
+        vendor_boot_sepolicy = boot_fs['vendor_boot'].tree / 'sepolicy'
+        if vendor_boot_sepolicy.exists():
+            selinux_policies.append(vendor_boot_sepolicy)
+
+        vendor_sepolicy = (
+            ext_fs['vendor'].tree / 'etc' / 'selinux' / 'precompiled_sepolicy'
+        )
+        if vendor_sepolicy.exists():
+            selinux_policies.append(vendor_sepolicy)
     else:
         selinux_policies = []
 
