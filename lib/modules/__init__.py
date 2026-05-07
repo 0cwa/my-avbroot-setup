@@ -76,6 +76,19 @@ def zip_extract(
             shutil.copyfileobj(f_in, f_out)
 
 
+def append_seapp_contexts(
+    zip: zipfile.ZipFile,
+    seapp_contexts_name: str,
+    ext_fs: dict[str, ExtFs],
+) -> None:
+    with (
+        zip.open(seapp_contexts_name, 'r') as f_in,
+        ext_fs['system'].open('system/etc/selinux/plat_seapp_contexts', 'ab') as f_out,
+    ):
+        shutil.copyfileobj(f_in, f_out)
+        f_out.write(b'\n')
+
+
 @dataclasses.dataclass
 class ModuleRequirements:
     boot_images: set[str]
