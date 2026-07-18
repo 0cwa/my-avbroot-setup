@@ -291,15 +291,6 @@ class ModuleRequirements:
 
 
 class Module(ABC):
-    @classmethod
-    @abstractmethod
-    def add_args(cls, parser: argparse.ArgumentParser):
-        ...
-
-    @abstractmethod
-    def __init__(self, args: argparse.Namespace):
-        ...
-
     @abstractmethod
     def requirements(self) -> ModuleRequirements:
         ...
@@ -315,18 +306,26 @@ class Module(ABC):
         ...
 
 
-@functools.cache
-def all_modules() -> list[type[Module]]:
-    from lib.modules.alterinstaller import AlterInstallerModule
-    from lib.modules.bcr import BCRModule
-    from lib.modules.custota import CustotaModule
-    from lib.modules.msd import MSDModule
-    from lib.modules.oemunlockonboot import OEMUnlockOnBootModule
+class LegacyCliModule(Module):
+    """A reviewed built-in module that owns its legacy CLI contract."""
 
-    return [
-        AlterInstallerModule,
-        BCRModule,
-        CustotaModule,
-        MSDModule,
-        OEMUnlockOnBootModule,
-    ]
+    @classmethod
+    @abstractmethod
+    def add_args(cls, parser: argparse.ArgumentParser):
+        ...
+
+    @classmethod
+    @abstractmethod
+    def from_args(cls, args: argparse.Namespace) -> 'LegacyCliModule':
+        ...
+
+
+@functools.cache
+def all_modules() -> list[type[LegacyCliModule]]:
+    from lib.modules.catalog import load_catalog
+    from lib.modules.registry import legacy_cli_module_types
+
+    # Catalog data and executable adapters are validated independently. Only
+    # the reviewed legacy classes participate in argument parsing.
+    load_catalog()
+    return list(legacy_cli_module_types())

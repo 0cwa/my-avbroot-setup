@@ -187,7 +187,7 @@ def run(args: argparse.Namespace, temp_dir: Path):
 
     for module_type in modules.all_modules():
         try:
-            module = module_type(args)
+            module = module_type.from_args(args)
         except modules.MissingArgs:
             continue
 

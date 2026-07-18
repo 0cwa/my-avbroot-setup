@@ -15,14 +15,14 @@ from lib import modules
 from lib.filesystem import CpioFs, ExtFs
 from lib.initscript import InitScript
 from lib.linux import linux_android_abi, linux_run
-from lib.modules import Module, ModuleRequirements
+from lib.modules import LegacyCliModule, ModuleRequirements
 from lib.modules.cil_rules import get_cil_rules
 
 
 logger = logging.getLogger(__name__)
 
 
-class MSDModule(Module):
+class MSDModule(LegacyCliModule):
     NAME: str = 'msd'
 
     @classmethod
@@ -38,6 +38,11 @@ class MSDModule(Module):
         )
 
         self.abi: str = linux_android_abi()
+
+    @classmethod
+    @override
+    def from_args(cls, args: argparse.Namespace) -> 'MSDModule':
+        return cls(args)
 
     @override
     def requirements(self) -> ModuleRequirements:

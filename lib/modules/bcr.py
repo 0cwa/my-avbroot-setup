@@ -11,13 +11,13 @@ import zipfile
 from lib import modules
 from lib.filesystem import CpioFs, ExtFs
 from lib.initscript import InitScript
-from lib.modules import Module, ModuleRequirements
+from lib.modules import LegacyCliModule, ModuleRequirements
 
 
 logger = logging.getLogger(__name__)
 
 
-class BCRModule(Module):
+class BCRModule(LegacyCliModule):
     NAME: str = 'bcr'
 
     @classmethod
@@ -31,6 +31,11 @@ class BCRModule(Module):
             self.NAME,
             modules.SSH_PUBLIC_KEY_CHENXIAOLONG,
         )
+
+    @classmethod
+    @override
+    def from_args(cls, args: argparse.Namespace) -> 'BCRModule':
+        return cls(args)
 
     @override
     def requirements(self) -> ModuleRequirements:

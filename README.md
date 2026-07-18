@@ -8,6 +8,11 @@ Unlike the norm in the Android modding community, I do not use runtime modificat
 
 This repo includes the script I use for modifying Android OTAs. Folks should probably not use the script as-is and instead, adapt it to their needs.
 
+Supported patch modules and their compatibility metadata are enumerated by the
+[declarative module catalog](./docs/module-catalog.md). Catalog entries do not
+enable modules or execute installer scripts; existing `--module-<name>` options
+remain the only module-selection mechanism.
+
 ## Requirements
 
 * Host must run Linux **or** an Android device must be connected via `adb`
