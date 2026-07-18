@@ -24,10 +24,11 @@ python3 module-tool.py lock update <module>
 ```
 
 Lock-update providers form a reviewed static registry; a module ID can never be
-used as a Python import path. This Phase 1 foundation has no provider and fails
-that command clearly. A later provider must emit a canonical, reviewable lock
-diff. Normal build and verification commands never fall back to a floating
-endpoint when a lock or cache object is missing or invalid.
+used as a Python import path. The only current provider is the fail-closed
+F-Droid privileged-extension provider documented in
+`docs/fdroid-lock-provider.md`. Normal build and verification commands never
+fall back to a floating endpoint when a lock or cache object is missing or
+invalid.
 
 ## Catalog
 
@@ -76,9 +77,10 @@ wrong-role, and wrong-revision links fail closed. This supports an Apache-2.0
 FPE binary with pinned upstream source metadata and a GPL client whose exact
 corresponding-source archive travels as a separately verified lock artifact.
 
-`lock update` accepts `--output` and repeatable `--version-code` options for
-future reviewed providers. Their meaning is provider-specific, and no provider
-is available in this phase.
+The F-Droid provider requires `--output`, `--client-version-code`, and
+`--fpe-ota-version-code`. The older repeatable `--version-code` parser surface
+remains available for future providers but is deliberately rejected for
+F-Droid because its two roles must not be inferred from argument order.
 
 ## Fetch and verify
 
