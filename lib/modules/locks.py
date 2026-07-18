@@ -30,7 +30,11 @@ from pydantic import (
     model_validator,
 )
 
-from lib.modules.archive import ArchiveLimits, inspect_zip
+from lib.modules.archive import (
+    ArchiveLimits,
+    inspect_zip,
+    read_allowlisted_member,
+)
 from lib.modules.registry import MODULE_ID_PATTERN
 
 
@@ -806,6 +810,26 @@ def verify_locked_artifacts(
                         raise LockError(
                             f'archive member does not match its lock: {expected.name}'
                         )
+                    if verify_apks and expected.apk is not None:
+                        data = read_allowlisted_member(
+                            verified_path,
+                            expected.name,
+                            allowlisted_members=artifact.archive.allowlisted_members,
+                            limits=artifact.archive.limits(),
+                        )
+                        # Keep nested APK verification capability-based too: the
+                        # verifier sees an anonymous descriptor containing bytes
+                        # read from the already verified outer archive inode, not
+                        # a cache pathname that can be replaced concurrently.
+                        with tempfile.TemporaryFile() as nested_apk:
+                            nested_apk.write(data)
+                            nested_apk.flush()
+                            nested_descriptor = nested_apk.fileno()
+                            verify_apk_identity(
+                                Path(f'/proc/self/fd/{nested_descriptor}'),
+                                expected.apk,
+                                pass_fds=(nested_descriptor,),
+                            )
             if verify_apks and artifact.apk is not None:
                 verify_apk_identity(
                     verified_path,

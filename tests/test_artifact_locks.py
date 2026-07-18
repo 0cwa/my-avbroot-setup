@@ -10,12 +10,15 @@ import tempfile
 import unittest
 from unittest import mock
 from urllib.request import Request
+import zipfile
 
 from pydantic import ValidationError
 
+from lib.modules.archive import read_allowlisted_member as read_archive_member
 from lib.modules.locks import (
     ApkIdentity,
     ArchiveMember,
+    ArchivePolicy,
     _ArtifactRedirectHandler,
     ArtifactLegal,
     ArtifactLock,
@@ -482,6 +485,128 @@ class ArtifactLockTest(unittest.TestCase):
                     verify_locked_artifacts(lock, cache),
                 )
             self.assertEqual(b'x' * len(data), path.read_bytes())
+
+    def test_nested_apk_identity_uses_verified_outer_inode_and_anonymous_fd(self) -> None:
+        nested_data = b'original nested APK bytes'
+        expected_identity = ApkIdentity(
+            package_name='org.example.nested',
+            version_code=11,
+            signer_sha256='ab' * 32,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = root / 'payload.zip'
+            with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('nested.apk', nested_data)
+                archive.writestr('installer.sh', b'never execute')
+            archive_data = archive_path.read_bytes()
+            artifact = ArtifactLock(
+                id='nested-payload',
+                kind='zip',
+                immutable_url='https://downloads.example/releases/v1/payload.zip',
+                allowed_origins=('https://downloads.example',),
+                version='v1',
+                size=len(archive_data),
+                sha256=hashlib.sha256(archive_data).hexdigest(),
+                archive=ArchivePolicy(members=(ArchiveMember(
+                    name='nested.apk',
+                    size=len(nested_data),
+                    sha256=hashlib.sha256(nested_data).hexdigest(),
+                    apk=expected_identity,
+                ),)),
+            )
+            lock = ArtifactLockFile(
+                schema_version=1,
+                modules=(ModuleLock(
+                    id='alpha',
+                    version='1',
+                    artifacts=(artifact,),
+                ),),
+            )
+            cache = root / 'cache'
+            cached = cache_path(cache, artifact.sha256)
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(archive_data)
+            cached.chmod(0o444)
+
+            def replace_cache_then_read(path, *args, **kwargs):
+                replacement = cached.with_suffix('.replacement')
+                replacement.write_bytes(b'attacker-controlled replacement')
+                replacement.chmod(0o444)
+                os.replace(replacement, cached)
+                return read_archive_member(path, *args, **kwargs)
+
+            def inspect_nested(path, expected, *, pass_fds):
+                self.assertEqual(expected_identity, expected)
+                self.assertEqual((int(path.name),), pass_fds)
+                self.assertEqual(nested_data, path.read_bytes())
+
+            with (
+                mock.patch(
+                    'lib.modules.locks.read_allowlisted_member',
+                    side_effect=replace_cache_then_read,
+                ) as read_member,
+                mock.patch(
+                    'lib.modules.locks.verify_apk_identity',
+                    side_effect=inspect_nested,
+                ) as verify_identity,
+            ):
+                self.assertEqual((cached,), verify_locked_artifacts(lock, cache))
+
+            read_member.assert_called_once()
+            verify_identity.assert_called_once()
+            self.assertEqual(b'attacker-controlled replacement', cached.read_bytes())
+
+    def test_nested_apk_identity_failure_fails_generic_verification(self) -> None:
+        nested_data = b'nested APK bytes'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = root / 'payload.zip'
+            with zipfile.ZipFile(archive_path, 'w') as archive:
+                archive.writestr('nested.apk', nested_data)
+            archive_data = archive_path.read_bytes()
+            artifact = ArtifactLock(
+                id='nested-payload',
+                kind='zip',
+                immutable_url='https://downloads.example/releases/v1/payload.zip',
+                allowed_origins=('https://downloads.example',),
+                version='v1',
+                size=len(archive_data),
+                sha256=hashlib.sha256(archive_data).hexdigest(),
+                archive=ArchivePolicy(members=(ArchiveMember(
+                    name='nested.apk',
+                    size=len(nested_data),
+                    sha256=hashlib.sha256(nested_data).hexdigest(),
+                    apk=ApkIdentity(
+                        package_name='org.example.nested',
+                        version_code=11,
+                        signer_sha256='ab' * 32,
+                    ),
+                ),)),
+            )
+            lock = ArtifactLockFile(
+                schema_version=1,
+                modules=(ModuleLock(
+                    id='alpha',
+                    version='1',
+                    artifacts=(artifact,),
+                ),),
+            )
+            cache = root / 'cache'
+            cached = cache_path(cache, artifact.sha256)
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(archive_data)
+            cached.chmod(0o444)
+
+            with (
+                mock.patch(
+                    'lib.modules.locks.verify_apk_identity',
+                    side_effect=LockError('required verifier is unavailable: apksigner'),
+                ) as verify_identity,
+                self.assertRaisesRegex(LockError, 'required verifier is unavailable'),
+            ):
+                verify_locked_artifacts(lock, cache)
+            verify_identity.assert_called_once()
 
     def test_apk_identity_requires_exact_single_signer_and_numeric_version(self) -> None:
         signer = 'ab' * 32
