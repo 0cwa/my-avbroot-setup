@@ -1,42 +1,159 @@
 # Module catalog
 
-`lib/modules/manifests/` is the declarative catalog for patches understood by
-this repository. Manifests are loaded in canonical module-ID order and describe
-support status, artifact kind, verification policy, compatibility, dependencies,
-conflicts, and structured warnings or incompatibility reasons.
+`lib/modules/manifests/` is the declarative, data-only catalog for patches
+understood by this repository. Manifests are loaded in canonical module-ID
+order. An adapter is an opaque identifier resolved through the static internal
+registry; it is never a Python import path supplied by a manifest.
 
-List the catalog without loading any patch adapter:
+List the catalog without loading patch adapters:
 
 ```bash
 python3 -m lib.modules.catalog
 python3 -m lib.modules.catalog --format json
 ```
 
-The catalog is intentionally separate from artifact acquisition and patch
-execution. A manifest adapter is an opaque identifier resolved through a
-static internal registry; it is not a Python import path. Only that trusted
-registry contains constructor module/class targets. Planned and incompatible
-entries cannot register adapters or become enabled by default.
+Catalog JSON is always emitted in canonical schema v2 form. This catalog does
+not fetch, inspect, install, or execute artifacts. In particular, it does not
+run `customize.sh`, `update-binary`, `service.sh`, `post-fs-data.sh`, KernelSU
+scripts, or recovery installer hooks.
 
-Verification fields describe the checks that the registered adapter is expected
-to enforce when it is constructed. The catalog loader checks that this metadata
-matches the internal adapter registration, but it does not verify, acquire, or
-trust an artifact by itself. Current adapters expect chenxiaolong's SSH signature
-key, identified by its stable SHA-256 fingerprint.
+## Schema v2
 
-Compatibility value `unknown` means that a ROM, root mode, or architecture has
-not yet been established by the catalog. Value `any` is reserved for evidence
-that no restriction applies. Either value must appear alone rather than being
-combined with specific compatibility tokens.
+Every v2 manifest records these independent decisions:
 
-This is the first stage of a broader patch format. It preserves the existing
-`--module-<name>` command-line interface and does not fetch artifacts. A later
-stage can add immutable URLs, digests, signer identities, and content-addressed
-caching without coupling network access to OTA modification.
+- `lifecycle`: `static-image`, `custom-init`, `root-runtime`,
+  `first-boot-provisioned`, `external-reference`, or `user-direct-install`.
+- `defaults.helper_enabled` and `defaults.pixene_profile_enabled`: two explicit
+  defaults with no implicit inheritance between them.
+- `verification.trust_roots`: typed identities. Valid types are
+  `x509-cert-sha256`, `apk-signer-sha256`, `openpgp-primary`,
+  `openpgp-subkey`, `ssh-key-sha256`, and `github-attestation`. An OpenPGP
+  signature may be anchored by either a pinned primary-key fingerprint or a
+  pinned signing-subkey fingerprint.
+- `capabilities.requires` and `capabilities.provides`: root and Zygisk
+  providers, selective signature spoofing, product privileged-app support,
+  custom init/SELinux support, ABI constraints, and minimum/maximum API level.
+- `compatibility.roms`: a per-ROM `supported`, `experimental`, or
+  `incompatible` status. Experimental and incompatible entries require a
+  structured reason.
+- `legal`: SPDX/`LicenseRef` identity, source URL and source-offer requirement,
+  upstream-only fetch policy, local-only policy, cache policy, output scopes,
+  and a permission record. Shared or published scope requires a permission
+  record. Local-only entries can only use `local-unpublished` scope.
+- structured `dependencies`, `conflicts`, `warnings`, and `reasons`. A
+  `critical` warning requires `acknowledgement_required = true`.
 
-Magisk modules, recovery flashable ZIPs, and other root-patcher archives are not
-executed automatically. Their installer scripts expect privileged runtime or
-recovery environments and may perform arbitrary operations. Supporting one
-requires a reviewed native adapter, an explicit compatibility classification,
-and a verification policy; otherwise the catalog must mark it planned or
-incompatible with a structured reason.
+The capability and policy fields are declarations for a later resolver. Merely
+loading a manifest does not prove the target ROM supplies a capability or grant
+permission to publish an artifact.
+
+The following is a complete abbreviated v2 example:
+
+```toml
+schema_version = 2
+id = 'example-module'
+name = 'Example module'
+status = 'supported'
+adapter = 'example-module'
+lifecycle = 'static-image'
+acknowledgement_required = false
+artifact_kinds = ['apk']
+dependencies = []
+conflicts = []
+warnings = []
+reasons = []
+
+[defaults]
+helper_enabled = false
+pixene_profile_enabled = false
+
+[verification]
+schemes = ['sha256', 'apk-signature']
+digest_required = true
+enforced_by = 'adapter'
+
+[[verification.trust_roots]]
+type = 'apk-signer-sha256'
+value = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+
+[compatibility]
+root_modes = ['rootless']
+architectures = ['arm64-v8a']
+
+[compatibility.roms.lineageos]
+status = 'supported'
+
+[compatibility.roms.grapheneos]
+status = 'experimental'
+reason = { code = 'device-testing-pending', message = 'Device testing is incomplete.' }
+
+[capabilities.requires]
+selective_signature_spoofing = false
+product_priv_app = true
+custom_init_selinux = false
+abis = ['arm64-v8a']
+min_api = 34
+max_api = 36
+
+[capabilities.provides]
+root = []
+zygisk = []
+selective_signature_spoofing = false
+product_priv_app = false
+custom_init_selinux = false
+
+[legal]
+license = 'Apache-2.0'
+source_url = 'https://example.invalid/upstream'
+source_offer_required = false
+upstream_only_fetching = true
+local_only = true
+cache_policy = 'read-write'
+allowed_output_scopes = ['local-unpublished']
+```
+
+Omit `root_provider` or `zygisk_provider` when a module does not require one;
+use `any` when any recognized provider is acceptable. Concrete recognized root
+providers are `magisk`, `kernelsu`, and `apatch`; Zygisk providers additionally
+include `zygisk-next`. Use `unknown` alone for legacy ABI, architecture, ROM, or
+root-mode evidence that has not been established, and `any` alone only when
+there is evidence no restriction applies.
+
+## Schema v1 migration
+
+Schema v1 remains valid input. The loader first applies the original strict v1
+validation and then deterministically migrates it to v2:
+
+- `planned` becomes `experimental` with a structured migration reason when v1
+  supplied none.
+- `default_enabled` becomes `defaults.helper_enabled`.
+  `defaults.pixene_profile_enabled` is always false because v1 never expressed
+  a Pixene profile default.
+- legacy signer strings become typed SSH or APK signer roots according to the
+  declared verification scheme.
+- legacy ROM `unknown` on a supported module becomes experimental with a
+  structured reason; explicit incompatibility and explicit ROM families retain
+  the module's migrated status.
+- absent capability claims remain false/empty and legacy architectures become
+  the ABI constraint.
+- absent legal evidence becomes `LicenseRef-Legacy-Unspecified` with
+  local-unpublished-only output. Migration never creates redistribution
+  permission from missing metadata.
+
+The checked-in legacy adapters continue to be checked against their static
+verification registrations after migration. The existing
+`--module-<name>`/`--module-<name>-sig` options, option order, destinations, and
+patch behavior are unchanged.
+
+## Adapter safety rules
+
+Supported executable lifecycles require a reviewed internal adapter.
+Experimental and incompatible modules cannot register one or be enabled by
+default. `external-reference` and `user-direct-install` entries never register
+an injection adapter. A supported adapter's verification schemes, trust-root
+values, and digest requirement must exactly match the static trusted registry.
+
+Dependencies and conflicts must reference known module IDs, cannot contain the
+module itself, and cannot overlap. This permits explicit mutually exclusive
+profiles such as GApps versus MicroG without encoding ROM-specific branches in
+adapter functions.
