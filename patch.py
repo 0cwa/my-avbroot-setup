@@ -16,9 +16,44 @@ import tomlkit
 from lib import external, modules
 from lib import filesystem
 from lib.filesystem import CpioFs, CpioInfo, ExtFs, ExtInfo
+from lib.modules.registry import (
+    INTERNAL_ADAPTERS,
+    LOCKED_ADAPTERS,
+    locked_adapter_factories,
+)
+from lib.modules.catalog import load_catalog
+from lib.modules.report import (
+    AdapterPatchResult,
+    build_patch_report,
+    write_patch_report,
+)
+from lib.modules.verified import (
+    VerifiedSelection,
+    construct_locked_adapters,
+    open_verified_selection,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+_LOCKED_ARGUMENT_NAMES = (
+    'module_lock',
+    'module_profile',
+    'module_cache',
+    'patch_report',
+)
+
+
+def _locked_arguments(args: argparse.Namespace) -> tuple[object | None, ...]:
+    return tuple(getattr(args, name, None) for name in _LOCKED_ARGUMENT_NAMES)
+
+
+def _locked_arguments_are_complete(args: argparse.Namespace) -> bool:
+    values = _locked_arguments(args)
+    return not any(value is not None for value in values) or all(
+        value is not None for value in values
+    )
 
 
 @dataclasses.dataclass
@@ -157,6 +192,29 @@ def parse_args():
     for module_type in modules.all_modules():
         module_type.add_args(parser)
 
+    # Keep this separate from the legacy per-module options above.  Locked
+    # adapters are selected only by a canonical local profile and lock.
+    parser.add_argument(
+        '--module-lock',
+        type=Path,
+        help='Canonical artifact lock for locked native adapters',
+    )
+    parser.add_argument(
+        '--module-profile',
+        type=Path,
+        help='Local capability and module-selection profile',
+    )
+    parser.add_argument(
+        '--module-cache',
+        type=Path,
+        help='Content-addressed cache containing all locked artifacts',
+    )
+    parser.add_argument(
+        '--patch-report',
+        type=Path,
+        help='Atomic deterministic report for locked adapter injection',
+    )
+
     args = parser.parse_args()
 
     if args.output is None:
@@ -165,10 +223,20 @@ def parse_args():
     if args.patch_arg is None:
         args.patch_arg = ['--rootless']
 
+    if not _locked_arguments_are_complete(args):
+        parser.error(
+            '--module-lock, --module-profile, --module-cache, and '
+            '--patch-report must be supplied together'
+        )
     return args
 
 
-def run(args: argparse.Namespace, temp_dir: Path):
+def _run(
+    args: argparse.Namespace,
+    temp_dir: Path,
+    locked_selection: VerifiedSelection | None,
+    locked_adapters: tuple[tuple[str, modules.Module], ...],
+):
     sign_key_avb = external.SigningKey(
         args.sign_key_avb,
         args.pass_avb_env_var,
@@ -181,6 +249,7 @@ def run(args: argparse.Namespace, temp_dir: Path):
     )
 
     inject_modules: list[modules.Module] = []
+    locked_module_ids: dict[int, str] = {}
     need_boot_fs: set[str] = set()
     need_ext_fs: set[str] = set()
     need_sepolicies = False
@@ -192,6 +261,15 @@ def run(args: argparse.Namespace, temp_dir: Path):
             continue
 
         inject_modules.append(module)
+
+        requirements = module.requirements()
+        need_boot_fs |= requirements.boot_images
+        need_ext_fs |= requirements.ext_images
+        need_sepolicies |= requirements.selinux_patching
+
+    for module_id, module in locked_adapters:
+        inject_modules.append(module)
+        locked_module_ids[id(module)] = module_id
 
         requirements = module.requirements()
         need_boot_fs |= requirements.boot_images
@@ -305,13 +383,30 @@ def run(args: argparse.Namespace, temp_dir: Path):
         selinux_policies = []
 
     # Inject modules.
+    locked_results: list[tuple[str, AdapterPatchResult]] = []
     for module in inject_modules:
-        module.inject(
+        result = module.inject(
             boot_fs,
             ext_fs,
             selinux_policies,
             compatible_sepolicy=args.compatible_sepolicy,
         )
+        module_id = locked_module_ids.get(id(module))
+        if module_id is not None:
+            if not isinstance(result, AdapterPatchResult):
+                raise RuntimeError(
+                    f'Locked adapter did not return a patch result: {module_id}'
+                )
+            locked_results.append((module_id, result))
+
+    # Validate the complete report (including cross-adapter output collisions)
+    # before repacking images or creating the output OTA.  The finished report
+    # is written only after all output work succeeds.
+    locked_report = (
+        build_patch_report(locked_selection, tuple(locked_results))
+        if locked_selection is not None
+        else None
+    )
 
     # Repack ext filesystem images.
     for name, fs in ext_fs.items():
@@ -353,6 +448,38 @@ def run(args: argparse.Namespace, temp_dir: Path):
         codename = get_ota_metadata(args.output)['pre-device']
         update_info = args.output.parent / f'{codename}.json'
         external.generate_update_info(update_info, args.output.name)
+
+    if locked_report is not None:
+        write_patch_report(
+            args.patch_report,
+            locked_report,
+        )
+
+
+def run(args: argparse.Namespace, temp_dir: Path):
+    """Prepare every locked adapter before any OTA verification or mutation."""
+
+    if not _locked_arguments_are_complete(args):
+        raise ValueError(
+            'locked module arguments must be supplied as one complete set'
+        )
+
+    if getattr(args, 'module_lock', None) is None:
+        return _run(args, temp_dir, None, ())
+
+    catalog = load_catalog(registrations=INTERNAL_ADAPTERS + LOCKED_ADAPTERS)
+    selection = open_verified_selection(
+        catalog,
+        args.module_lock,
+        args.module_profile,
+        args.module_cache,
+    )
+    with selection:
+        adapters = construct_locked_adapters(
+            selection,
+            locked_adapter_factories(),
+        )
+        return _run(args, temp_dir, selection, adapters)
 
 
 def main():

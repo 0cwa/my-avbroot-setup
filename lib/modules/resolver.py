@@ -83,6 +83,31 @@ class CriticalAcknowledgement(ResolverModel):
         return value
 
 
+class ExperimentalAcknowledgement(ResolverModel):
+    """Affirmative consent bound to the exact experimental catalog policy."""
+
+    module: NonBlankString
+    lock_sha256: str
+    output_scope: Literal['local-unpublished', 'private', 'shared', 'published']
+    acknowledgement: NonBlankString
+
+    @field_validator('module')
+    @classmethod
+    def validate_module(cls, value: str) -> str:
+        if not MODULE_ID_PATTERN.fullmatch(value):
+            raise ValueError('invalid acknowledged experimental module ID')
+        return value
+
+    @field_validator('lock_sha256')
+    @classmethod
+    def validate_digest(cls, value: str) -> str:
+        if not SHA256_PATTERN.fullmatch(value):
+            raise ValueError(
+                'experimental acknowledgement lock digest must be lowercase SHA-256'
+            )
+        return value
+
+
 class ResolutionProfile(ResolverModel):
     schema_version: Literal[1]
     id: NonBlankString
@@ -94,6 +119,7 @@ class ResolutionProfile(ResolverModel):
     enabled_modules: tuple[NonBlankString, ...]
     capabilities: ObservedCapabilities
     acknowledgements: tuple[CriticalAcknowledgement, ...] = ()
+    experimental_acknowledgements: tuple[ExperimentalAcknowledgement, ...] = ()
 
     @field_validator('id', 'rom_family', 'abi')
     @classmethod
@@ -117,6 +143,11 @@ class ResolutionProfile(ResolverModel):
         modules = [item.module for item in self.acknowledgements]
         if len(modules) != len(set(modules)):
             raise ValueError('critical acknowledgements must be unique by module')
+        experimental_modules = [
+            item.module for item in self.experimental_acknowledgements
+        ]
+        if len(experimental_modules) != len(set(experimental_modules)):
+            raise ValueError('experimental acknowledgements must be unique by module')
         return self
 
 
@@ -280,6 +311,10 @@ def _canonical_profile(profile: ResolutionProfile) -> dict[str, object]:
         data['acknowledgements'],
         key=lambda acknowledgement: acknowledgement['module'],
     )
+    data['experimental_acknowledgements'] = sorted(
+        data['experimental_acknowledgements'],
+        key=lambda acknowledgement: acknowledgement['module'],
+    )
     return data
 
 
@@ -289,6 +324,11 @@ def resolve_profile(
     lock: ArtifactLockFile,
     lock_sha256: str,
 ) -> Resolution:
+    # ``lock_sha256`` is the digest of the accepted canonical input bytes, not
+    # necessarily ``lock.as_json()``.  The canonical loader also accepts the
+    # pre-extension schema-v1 representation and returns its actual byte
+    # digest.  Keep canonical-byte validation at that I/O boundary; this
+    # pure resolver validates and consumes the paired digest as authoritative.
     if not SHA256_PATTERN.fullmatch(lock_sha256):
         raise ResolutionError('actual lock digest must be lowercase SHA-256')
     if profile.rom_family == 'unknown':
@@ -359,14 +399,55 @@ def resolve_profile(
             'acknowledgements supplied for modules that do not require them: '
             f'{", ".join(sorted(unnecessary_acknowledgements))}'
         )
+    experimental_acknowledgements = {
+        item.module: item for item in profile.experimental_acknowledgements
+    }
+    unused_experimental_acknowledgements = (
+        set(experimental_acknowledgements) - requested
+    )
+    if unused_experimental_acknowledgements:
+        raise ResolutionError(
+            'experimental acknowledgements reference unselected modules: '
+            f'{", ".join(sorted(unused_experimental_acknowledgements))}'
+        )
+    unnecessary_experimental_acknowledgements = {
+        module_id
+        for module_id in experimental_acknowledgements
+        if selected[module_id].status != 'experimental'
+        or selected[module_id].experimental_opt_in is None
+    }
+    if unnecessary_experimental_acknowledgements:
+        raise ResolutionError(
+            'experimental acknowledgements supplied for modules without an '
+            'experimental opt-in policy: '
+            f'{", ".join(sorted(unnecessary_experimental_acknowledgements))}'
+        )
 
     decisions: list[CompatibilityDecision] = []
     for module_id in sorted(selected):
         module = selected[module_id]
         if module.status == 'incompatible':
             raise ResolutionError(f'{module.id} is globally incompatible')
-        if module.status == 'experimental' and module_id not in profile.enabled_modules:
-            raise ResolutionError(f'{module.id} requires explicit experimental opt-in')
+        if module.status == 'experimental':
+            policy = module.experimental_opt_in
+            if policy is None:
+                raise ResolutionError(
+                    f'{module.id} has no experimental opt-in policy and cannot '
+                    'be selected'
+                )
+            acknowledgement = experimental_acknowledgements.get(module.id)
+            if acknowledgement is None:
+                raise ResolutionError(
+                    f'{module.id} requires an explicit experimental acknowledgement'
+                )
+            if (
+                acknowledgement.lock_sha256 != lock_sha256
+                or acknowledgement.output_scope != profile.output_scope
+                or acknowledgement.acknowledgement != policy.acknowledgement
+            ):
+                raise ResolutionError(
+                    f'{module.id} experimental acknowledgement is stale or wrong'
+                )
 
         rom = module.compatibility.roms.get(profile.rom_family)
         if rom is None:
