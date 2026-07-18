@@ -392,6 +392,20 @@ class ModuleDefaults(CatalogModel):
     pixene_profile_enabled: StrictBool = False
 
 
+class ExperimentalOptInPolicy(CatalogModel):
+    """Catalog policy text that a future profile resolver must acknowledge."""
+
+    required: StrictBool
+    acknowledgement: NonBlankString
+
+    @field_validator('required')
+    @classmethod
+    def validate_required(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError('experimental opt-in policy must be required')
+        return value
+
+
 class ModuleSpec(CatalogModel):
     schema_version: Literal[2]
     id: StrictString
@@ -401,6 +415,7 @@ class ModuleSpec(CatalogModel):
     lifecycle: Lifecycle
     defaults: ModuleDefaults
     acknowledgement_required: StrictBool = False
+    experimental_opt_in: ExperimentalOptInPolicy | None = None
     artifact_kinds: tuple[
         Literal[
             'native-image-module-zip',
@@ -458,8 +473,21 @@ class ModuleSpec(CatalogModel):
             and self.adapter is None
         ):
             raise ValueError('supported executable modules require an adapter')
-        if self.status != 'supported' and self.adapter is not None:
-            raise ValueError('non-supported modules cannot register an adapter')
+        if self.status == 'incompatible' and self.adapter is not None:
+            raise ValueError('incompatible modules cannot register an adapter')
+        if (
+            self.status == 'experimental'
+            and self.adapter is not None
+            and self.experimental_opt_in is None
+        ):
+            raise ValueError(
+                'experimental modules with an adapter require an explicit '
+                'opt-in acknowledgement policy'
+            )
+        if self.status != 'experimental' and self.experimental_opt_in is not None:
+            raise ValueError(
+                'experimental_opt_in is valid only for experimental modules'
+            )
         if (
             self.lifecycle in {'external-reference', 'user-direct-install'}
             and self.adapter is not None
@@ -676,11 +704,11 @@ def migrate_v1_manifest(raw: Mapping[str, object]) -> dict[str, object]:
     status: ModuleStatus = (
         'experimental' if spec.status == 'planned' else spec.status
     )
-    migration_reason = {
+    migration_reason: dict[str, object] = {
         'code': 'legacy-metadata-incomplete',
         'message': 'Schema v1 did not record this compatibility evidence.',
     }
-    base_reason = (
+    base_reason: dict[str, object] = (
         spec.reasons[0].model_dump(mode='json')
         if spec.reasons
         else migration_reason
@@ -730,6 +758,7 @@ def migrate_v1_manifest(raw: Mapping[str, object]) -> dict[str, object]:
             'pixene_profile_enabled': False,
         },
         'acknowledgement_required': False,
+        'experimental_opt_in': None,
         'artifact_kinds': list(spec.artifact_kinds),
         'verification': {
             'schemes': list(spec.verification.schemes),

@@ -23,6 +23,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     StringConstraints,
     field_validator,
@@ -39,10 +40,23 @@ MAX_LOCK_FILE_BYTES = 16 * 1024 * 1024
 ANDROID_PACKAGE_PATTERN = re.compile(
     r'^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$'
 )
+LICENSE_PATTERN = re.compile(
+    r'^(?:LicenseRef-[A-Za-z0-9][A-Za-z0-9.-]*|'
+    r'[A-Za-z0-9][A-Za-z0-9.+-]*)'
+    r'(?:\s+(?:AND|OR)\s+(?:LicenseRef-[A-Za-z0-9][A-Za-z0-9.-]*|'
+    r'[A-Za-z0-9][A-Za-z0-9.+-]*))*$'
+)
 NonBlankString = Annotated[
     str,
     StringConstraints(strict=True, min_length=1, pattern=r'.*\S.*'),
 ]
+ArtifactRole = Literal[
+    'injection-input',
+    'corresponding-source',
+    'verification-evidence',
+]
+
+
 def _url_origin(value: str) -> str:
     parsed = urlsplit(value)
     host = (parsed.hostname or '').encode('idna').decode('ascii').lower()
@@ -112,6 +126,7 @@ class ArchiveMember(LockModel):
     name: NonBlankString
     size: StrictInt = Field(ge=0)
     sha256: str
+    apk: ApkIdentity | None = None
 
     @field_validator('sha256')
     @classmethod
@@ -193,9 +208,56 @@ class SourceVerification(LockModel):
         return values
 
 
+class ArtifactSource(LockModel):
+    """Immutable upstream source identity and optional locked correspondence."""
+
+    url: NonBlankString
+    revision: NonBlankString
+    corresponding_source_artifact: str | None = None
+
+    @field_validator('url')
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        _validate_public_https_url(value)
+        return value
+
+    @field_validator('corresponding_source_artifact')
+    @classmethod
+    def validate_corresponding_source(cls, value: str | None) -> str | None:
+        if value is not None and not ARTIFACT_ID_PATTERN.fullmatch(value):
+            raise ValueError(f'invalid corresponding-source artifact ID: {value!r}')
+        return value
+
+
+class ArtifactLegal(LockModel):
+    """Per-artifact redistribution and corresponding-source requirements."""
+
+    license: NonBlankString
+    source_offer_required: StrictBool
+    allowed_output_scopes: tuple[
+        Literal['local-unpublished', 'private', 'shared', 'published'],
+        ...,
+    ] = Field(min_length=1)
+
+    @field_validator('license')
+    @classmethod
+    def validate_license(cls, value: str) -> str:
+        if not LICENSE_PATTERN.fullmatch(value):
+            raise ValueError('license must be an SPDX identifier or LicenseRef')
+        return value
+
+    @field_validator('allowed_output_scopes')
+    @classmethod
+    def validate_scopes(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError('artifact output scopes must be unique')
+        return values
+
+
 class ArtifactLock(LockModel):
     id: str
     kind: Literal['apk', 'zip', 'jar', 'json', 'signature', 'other']
+    role: ArtifactRole = 'injection-input'
     immutable_url: NonBlankString
     allowed_origins: tuple[NonBlankString, ...]
     version: NonBlankString
@@ -204,6 +266,8 @@ class ArtifactLock(LockModel):
     apk: ApkIdentity | None = None
     archive: ArchivePolicy | None = None
     source_verification: SourceVerification | None = None
+    source: ArtifactSource | None = None
+    legal: ArtifactLegal | None = None
 
     @field_validator('id')
     @classmethod
@@ -246,6 +310,32 @@ class ArtifactLock(LockModel):
             raise ValueError('APK artifacts require APK identity, and other kinds forbid it')
         if self.archive is not None and self.kind not in ('zip', 'jar', 'apk'):
             raise ValueError('archive policy is valid only for ZIP/JAR/APK artifacts')
+        if self.role == 'corresponding-source' and self.apk is not None:
+            raise ValueError('corresponding-source artifacts cannot be APK payloads')
+        if (
+            self.source is not None
+            and self.source.corresponding_source_artifact == self.id
+        ):
+            raise ValueError('an artifact cannot be its own corresponding source')
+        if (
+            self.role == 'corresponding-source'
+            and self.source is not None
+            and self.source.corresponding_source_artifact is not None
+        ):
+            raise ValueError(
+                'corresponding-source artifacts cannot link another source artifact'
+            )
+        if (
+            self.legal is not None
+            and self.legal.source_offer_required
+            and (
+                self.source is None
+                or self.source.corresponding_source_artifact is None
+            )
+        ):
+            raise ValueError(
+                'source-offer-required artifacts require locked corresponding source'
+            )
         return self
 
 
@@ -268,6 +358,30 @@ class ModuleLock(LockModel):
             raise ValueError('artifact IDs must be unique within a module')
         if ids != sorted(ids):
             raise ValueError('artifacts must be sorted by canonical ID')
+        artifacts = {artifact.id: artifact for artifact in self.artifacts}
+        for artifact in self.artifacts:
+            artifact_source = artifact.source
+            if (
+                artifact_source is None
+                or artifact_source.corresponding_source_artifact is None
+            ):
+                continue
+            source_id = artifact_source.corresponding_source_artifact
+            source = artifacts.get(source_id)
+            if source is None:
+                raise ValueError(
+                    f'artifact {artifact.id!r} references missing corresponding '
+                    f'source artifact {source_id!r}'
+                )
+            if source.role != 'corresponding-source':
+                raise ValueError(
+                    f'artifact {source_id!r} must have corresponding-source role'
+                )
+            if source.version != artifact_source.revision:
+                raise ValueError(
+                    f'artifact {source_id!r} version must match the locked source '
+                    'revision'
+                )
         return self
 
 
@@ -290,6 +404,38 @@ class ArtifactLockFile(LockModel):
             indent=2,
             sort_keys=True,
         ) + '\n'
+
+    def _as_legacy_v1_json(self) -> str | None:
+        """Return pre-extension canonical JSON when no v2 lock fields are used."""
+
+        data = self.model_dump(mode='json')
+        for module, module_data in zip(self.modules, data['modules'], strict=True):
+            for artifact, artifact_data in zip(
+                module.artifacts,
+                module_data['artifacts'],
+                strict=True,
+            ):
+                if (
+                    artifact.role != 'injection-input'
+                    or artifact.source is not None
+                    or artifact.legal is not None
+                ):
+                    return None
+                artifact_data.pop('role')
+                artifact_data.pop('source')
+                artifact_data.pop('legal')
+                archive = artifact.archive
+                if archive is None:
+                    continue
+                for member, member_data in zip(
+                    archive.members,
+                    artifact_data['archive']['members'],
+                    strict=True,
+                ):
+                    if member.apk is not None:
+                        return None
+                    member_data.pop('apk')
+        return json.dumps(data, indent=2, sort_keys=True) + '\n'
 
 
 def _read_lock_bytes(path: Path) -> bytes:
@@ -339,7 +485,11 @@ def load_canonical_lock(path: Path) -> tuple[ArtifactLockFile, str]:
 
     data = _read_lock_bytes(path)
     lock = _parse_lock(path, data)
-    if data != lock.as_json().encode('UTF-8'):
+    canonical = lock.as_json().encode('UTF-8')
+    legacy = lock._as_legacy_v1_json()
+    if data != canonical and (
+        legacy is None or data != legacy.encode('UTF-8')
+    ):
         raise LockError('artifact lock is valid but not canonical JSON')
     return lock, hashlib.sha256(data).hexdigest()
 

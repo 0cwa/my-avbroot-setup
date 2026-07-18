@@ -15,15 +15,19 @@ from pydantic import ValidationError
 
 from lib.modules.locks import (
     ApkIdentity,
+    ArchiveMember,
     _ArtifactRedirectHandler,
+    ArtifactLegal,
     ArtifactLock,
     ArtifactLockFile,
+    ArtifactSource,
     LockError,
     MAX_LOCK_FILE_BYTES,
     ModuleLock,
     cache_path,
     _download_https,
     fetch_artifact,
+    load_canonical_lock,
     load_lock,
     verify_cached_artifact,
     verify_apk_identity,
@@ -63,6 +67,29 @@ class ArtifactLockTest(unittest.TestCase):
             self.assertEqual(first, path.read_bytes())
             self.assertTrue(first.endswith(b'\n'))
             self.assertEqual(lock, loaded)
+
+    def test_pre_extension_schema_v1_lock_remains_canonical_input(self) -> None:
+        lock = ArtifactLockFile(
+            schema_version=1,
+            modules=(ModuleLock(
+                id='alpha',
+                version='1',
+                artifacts=(artifact_for(),),
+            ),),
+        )
+        legacy = lock._as_legacy_v1_json()
+        self.assertIsNotNone(legacy)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / 'lock.json'
+            path.write_text(legacy, encoding='UTF-8')
+
+            loaded, digest = load_canonical_lock(path)
+
+            self.assertEqual(lock, loaded)
+            self.assertEqual(
+                hashlib.sha256(legacy.encode('UTF-8')).hexdigest(),
+                digest,
+            )
 
     def test_extra_and_duplicate_ids_fail_closed(self) -> None:
         artifact = artifact_for()
@@ -166,6 +193,122 @@ class ArtifactLockTest(unittest.TestCase):
                 **artifact.model_dump(),
                 'apk': apk.model_dump(),
             })
+
+    def test_archive_member_can_lock_nested_apk_identity(self) -> None:
+        member = ArchiveMember(
+            name='system/app/Example/Example.apk',
+            size=17,
+            sha256='ab' * 32,
+            apk=ApkIdentity(
+                package_name='org.example.app',
+                version_code=7,
+                signer_sha256='cd' * 32,
+            ),
+        )
+
+        self.assertEqual('org.example.app', member.apk.package_name)
+        self.assertEqual(
+            member,
+            ArchiveMember.model_validate(member.model_dump(mode='json')),
+        )
+
+    def test_artifact_legal_source_link_is_explicit_and_version_bound(self) -> None:
+        binary = artifact_for().model_copy(update={
+            'id': 'client-apk',
+            'kind': 'apk',
+            'apk': ApkIdentity(
+                package_name='org.example.app',
+                version_code=7,
+                signer_sha256='cd' * 32,
+            ),
+            'source': ArtifactSource(
+                url='https://git.example/org/example',
+                revision='v1',
+                corresponding_source_artifact='client-source',
+            ),
+            'legal': ArtifactLegal(
+                license='GPL-3.0-or-later',
+                source_offer_required=True,
+                allowed_output_scopes=('shared', 'published'),
+            ),
+        })
+        source = artifact_for(b'source').model_copy(update={
+            'id': 'client-source',
+            'kind': 'zip',
+            'role': 'corresponding-source',
+        })
+        # model_copy deliberately skips validation, so bind the expected version.
+        source = ArtifactLock.model_validate({
+            **source.model_dump(mode='json'),
+            'version': 'v1',
+        })
+
+        module = ModuleLock(
+            id='alpha',
+            version='1',
+            artifacts=(binary, source),
+        )
+
+        self.assertEqual('injection-input', module.artifacts[0].role)
+        self.assertEqual('corresponding-source', module.artifacts[1].role)
+        self.assertEqual(
+            'client-source',
+            module.artifacts[0].source.corresponding_source_artifact,
+        )
+
+    def test_source_offer_requires_locked_corresponding_source(self) -> None:
+        artifact = artifact_for()
+        with self.assertRaisesRegex(
+            ValidationError, 'require locked corresponding source'
+        ):
+            ArtifactLock.model_validate({
+                **artifact.model_dump(mode='json'),
+                'legal': {
+                    'license': 'GPL-3.0-or-later',
+                    'source_offer_required': True,
+                    'allowed_output_scopes': ['published'],
+                },
+            })
+
+    def test_corresponding_source_link_fails_closed(self) -> None:
+        binary = artifact_for().model_copy(update={
+            'id': 'client-apk',
+            'source': ArtifactSource(
+                url='https://git.example/org/example',
+                revision='v1',
+                corresponding_source_artifact='client-source',
+            ),
+        })
+        source = artifact_for(b'source').model_copy(update={
+            'id': 'client-source',
+            'version': 'wrong-revision',
+            'role': 'corresponding-source',
+        })
+
+        with self.assertRaisesRegex(ValidationError, 'references missing'):
+            ModuleLock(
+                id='alpha',
+                version='1',
+                artifacts=(binary,),
+            )
+
+        with self.assertRaisesRegex(ValidationError, 'version must match'):
+            ModuleLock(
+                id='alpha',
+                version='1',
+                artifacts=(binary, source),
+            )
+
+        not_source = source.model_copy(update={
+            'version': 'v1',
+            'role': 'verification-evidence',
+        })
+        with self.assertRaisesRegex(ValidationError, 'corresponding-source role'):
+            ModuleLock(
+                id='alpha',
+                version='1',
+                artifacts=(binary, not_source),
+            )
 
     def test_bounded_fetch_and_cache_reverification(self) -> None:
         data = b'locked bytes'

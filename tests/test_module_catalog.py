@@ -300,6 +300,127 @@ class ModuleCatalogTest(unittest.TestCase):
             )
             self.assertEqual('GPL-3.0-or-later', module.legal.license)
 
+    def test_reviewed_experimental_adapter_requires_opt_in_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            self.write_v2_manifest(
+                directory, 'alpha.toml', id='alpha', adapter='alpha'
+            )
+            path = directory / 'alpha.toml'
+            original = path.read_text(encoding='UTF-8').replace(
+                "status = 'supported'",
+                "status = 'experimental'",
+                1,
+            )
+            path.write_text(original, encoding='UTF-8')
+
+            with self.assertRaisesRegex(CatalogError, 'explicit opt-in'):
+                load_catalog(directory, registrations=(registration('alpha'),))
+
+            path.write_text(
+                original.replace(
+                    '[defaults]',
+                    "[experimental_opt_in]\n"
+                    "required = false\n"
+                    "acknowledgement = 'I accept experimental device risk.'\n\n"
+                    '[defaults]',
+                ),
+                encoding='UTF-8',
+            )
+
+            with self.assertRaisesRegex(CatalogError, 'policy must be required'):
+                load_catalog(directory, registrations=(registration('alpha'),))
+
+            path.write_text(
+                path.read_text(encoding='UTF-8').replace(
+                    "required = false\nacknowledgement =",
+                    "required = true\nacknowledgement =",
+                ),
+                encoding='UTF-8',
+            )
+
+            module = load_catalog(
+                directory,
+                registrations=(registration('alpha'),),
+            ).modules[0]
+            self.assertEqual('experimental', module.status)
+            self.assertEqual('alpha', module.adapter)
+            self.assertTrue(module.experimental_opt_in.required)
+            self.assertEqual(
+                'I accept experimental device risk.',
+                module.experimental_opt_in.acknowledgement,
+            )
+
+    def test_experimental_adapter_cannot_be_default_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            self.write_v2_manifest(
+                directory, 'alpha.toml', id='alpha', adapter='alpha'
+            )
+            path = directory / 'alpha.toml'
+            path.write_text(
+                path.read_text(encoding='UTF-8')
+                .replace("status = 'supported'", "status = 'experimental'", 1)
+                .replace(
+                    '[defaults]',
+                    "[experimental_opt_in]\n"
+                    "required = true\n"
+                    "acknowledgement = 'I accept experimental device risk.'\n\n"
+                    '[defaults]',
+                )
+                .replace('helper_enabled = false', 'helper_enabled = true'),
+                encoding='UTF-8',
+            )
+
+            with self.assertRaisesRegex(CatalogError, 'cannot be enabled by default'):
+                load_catalog(directory, registrations=(registration('alpha'),))
+
+    def test_incompatible_adapter_remains_forbidden(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            self.write_v2_manifest(
+                directory, 'alpha.toml', id='alpha', adapter='alpha'
+            )
+            path = directory / 'alpha.toml'
+            path.write_text(
+                path.read_text(encoding='UTF-8')
+                .replace("status = 'supported'", "status = 'incompatible'", 1)
+                .replace(
+                    'reasons = []',
+                    "reasons = [{ code = 'unsupported-target', "
+                    "message = 'The target is incompatible.' }]",
+                ),
+                encoding='UTF-8',
+            )
+
+            with self.assertRaisesRegex(
+                CatalogError, 'incompatible modules cannot register an adapter'
+            ):
+                load_catalog(directory, registrations=(registration('alpha'),))
+
+    def test_supported_module_rejects_experimental_opt_in_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            self.write_v2_manifest(
+                directory, 'alpha.toml', id='alpha', adapter='alpha'
+            )
+            path = directory / 'alpha.toml'
+            path.write_text(
+                path.read_text(encoding='UTF-8').replace(
+                    '[defaults]',
+                    "[experimental_opt_in]\n"
+                    "required = true\n"
+                    "acknowledgement = 'Not valid for supported modules.'\n\n"
+                    '[defaults]',
+                ),
+                encoding='UTF-8',
+            )
+
+            with self.assertRaisesRegex(
+                CatalogError, 'valid only for experimental modules'
+            ):
+                load_catalog(directory, registrations=(registration('alpha'),))
+
     def test_openpgp_verification_requires_primary_and_subkey_roots(self) -> None:
         for root_type in ('openpgp-primary', 'openpgp-subkey'):
             with self.subTest(root_type=root_type):
