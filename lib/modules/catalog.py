@@ -167,8 +167,8 @@ class VerificationPolicy(CatalogModel):
         }
         root_types = {root.type for root in self.trust_roots}
         for scheme, accepted_types in required_roots.items():
-            if scheme in self.schemes and not (accepted_types & root_types):
-                raise ValueError(f'{scheme} requires a matching typed trust root')
+            if scheme in self.schemes and not accepted_types.issubset(root_types):
+                raise ValueError(f'{scheme} requires all matching typed trust roots')
 
         allowed_types: set[str] = set()
         for scheme in self.schemes:

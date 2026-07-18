@@ -300,24 +300,48 @@ class ModuleCatalogTest(unittest.TestCase):
             )
             self.assertEqual('GPL-3.0-or-later', module.legal.license)
 
-    def test_openpgp_primary_or_subkey_can_be_the_trust_root(self) -> None:
+    def test_openpgp_verification_requires_primary_and_subkey_roots(self) -> None:
         for root_type in ('openpgp-primary', 'openpgp-subkey'):
             with self.subTest(root_type=root_type):
-                policy = VerificationPolicy.model_validate(
-                    {
-                        'schemes': ['openpgp-signature'],
-                        'trust_roots': [
-                            {
-                                'type': root_type,
-                                'value': '0' * 40,
-                            }
-                        ],
-                        'digest_required': False,
-                        'enforced_by': 'adapter',
-                    }
-                )
+                with self.assertRaisesRegex(
+                    ValueError, 'requires all matching typed trust roots'
+                ):
+                    VerificationPolicy.model_validate(
+                        {
+                            'schemes': ['openpgp-signature'],
+                            'trust_roots': [
+                                {
+                                    'type': root_type,
+                                    'value': '0' * 40,
+                                }
+                            ],
+                            'digest_required': False,
+                            'enforced_by': 'adapter',
+                        }
+                    )
 
-                self.assertEqual(root_type, policy.trust_roots[0].type)
+        policy = VerificationPolicy.model_validate(
+            {
+                'schemes': ['openpgp-signature'],
+                'trust_roots': [
+                    {
+                        'type': 'openpgp-primary',
+                        'value': '0' * 40,
+                    },
+                    {
+                        'type': 'openpgp-subkey',
+                        'value': '1' * 40,
+                    },
+                ],
+                'digest_required': False,
+                'enforced_by': 'adapter',
+            }
+        )
+
+        self.assertEqual(
+            ('openpgp-primary', 'openpgp-subkey'),
+            tuple(root.type for root in policy.trust_roots),
+        )
 
     def test_critical_warning_requires_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
