@@ -2,10 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import hashlib
+from pathlib import Path
+import tempfile
 import unittest
 
 from lib.modules.catalog import ModuleCatalog, ModuleSpec
-from lib.modules.locks import ArtifactLock, ArtifactLockFile, ModuleLock
+from lib.modules.locks import (
+    ArtifactLock,
+    ArtifactLockFile,
+    ModuleLock,
+    load_canonical_lock,
+)
 from lib.modules.resolver import (
     ResolutionError,
     ResolutionProfile,
@@ -100,12 +107,13 @@ def profile(*modules: str, **updates) -> ResolutionProfile:
             'custom_init_selinux': False,
         },
         'acknowledgements': [],
+        'experimental_acknowledgements': [],
     }
     data.update(updates)
     return ResolutionProfile.model_validate(data)
 
 
-def lock_for(*module_ids: str) -> ArtifactLockFile:
+def lock_for(*module_ids: str, version: str = '1') -> ArtifactLockFile:
     ids = tuple(sorted(set(module_ids))) or ('fixture-lock',)
     modules = []
     for module_id in ids:
@@ -115,26 +123,32 @@ def lock_for(*module_ids: str) -> ArtifactLockFile:
             kind='other',
             immutable_url=f'https://downloads.example/{module_id}/payload.bin',
             allowed_origins=('https://downloads.example',),
-            version='1',
+            version=version,
             size=len(payload),
             sha256=hashlib.sha256(payload).hexdigest(),
         )
         modules.append(ModuleLock(
             id=module_id,
-            version='1',
+            version=version,
             artifacts=(artifact,),
         ))
     return ArtifactLockFile(schema_version=1, modules=tuple(modules))
+
+
+def lock_digest(lock: ArtifactLockFile) -> str:
+    return hashlib.sha256(lock.as_json().encode('UTF-8')).hexdigest()
 
 
 def resolve_profile(
     catalog: ModuleCatalog,
     selected_profile: ResolutionProfile,
     lock: ArtifactLockFile | None = None,
-    lock_sha256: str = LOCK_DIGEST,
+    lock_sha256: str | None = None,
 ):
     if lock is None:
         lock = lock_for(*selected_profile.enabled_modules)
+    if lock_sha256 is None:
+        lock_sha256 = lock_digest(lock)
     return _resolve_profile(catalog, selected_profile, lock, lock_sha256)
 
 
@@ -188,12 +202,56 @@ class ResolverTest(unittest.TestCase):
         )
         self.assertNotEqual(first.fingerprint, changed_profile.fingerprint)
 
+        changed_lock_file = lock_for('alpha', 'zeta', version='2')
         changed_lock = resolve_profile(
             ModuleCatalog((alpha, zeta)),
             profile('alpha', 'zeta'),
-            lock_sha256='b' * 64,
+            lock=changed_lock_file,
         )
         self.assertNotEqual(first.fingerprint, changed_lock.fingerprint)
+
+    def test_pre_extension_canonical_v1_lock_digest_resolves(self) -> None:
+        expected_lock = lock_for('alpha')
+        legacy_json = expected_lock._as_legacy_v1_json()
+        self.assertIsNotNone(legacy_json)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / 'artifacts.lock.json'
+            lock_path.write_text(legacy_json, encoding='UTF-8')
+            loaded_lock, actual_digest = load_canonical_lock(lock_path)
+
+        self.assertNotEqual(lock_digest(loaded_lock), actual_digest)
+        result = _resolve_profile(
+            ModuleCatalog((module('alpha'),)),
+            profile('alpha'),
+            loaded_lock,
+            actual_digest,
+        )
+        self.assertEqual(actual_digest, result.lock_sha256)
+
+    def test_lock_digest_is_authoritative_only_after_shape_validation(self) -> None:
+        selected_lock = lock_for('alpha')
+        for untrusted_digest in ('b' * 63, 'B' * 64, 'not-a-digest'):
+            with self.subTest(digest=untrusted_digest), self.assertRaisesRegex(
+                ResolutionError,
+                'actual lock digest must be lowercase SHA-256',
+            ):
+                _resolve_profile(
+                    ModuleCatalog((module('alpha'),)),
+                    profile('alpha'),
+                    selected_lock,
+                    untrusted_digest,
+                )
+
+        # Association with the lock bytes is the canonical loader's boundary.
+        # A well-formed digest supplied by that caller is authoritative here.
+        boundary_digest = 'b' * 64
+        result = _resolve_profile(
+            ModuleCatalog((module('alpha'),)),
+            profile('alpha'),
+            selected_lock,
+            boundary_digest,
+        )
+        self.assertEqual(boundary_digest, result.lock_sha256)
 
     def test_selected_modules_must_exist_in_artifact_lock(self) -> None:
         with self.assertRaisesRegex(ResolutionError, 'absent from the artifact lock'):
@@ -370,7 +428,7 @@ class ResolverTest(unittest.TestCase):
             }]
 
         critical = module('alpha', make_critical)
-        lock_digest = 'a' * 64
+        actual_lock_digest = lock_digest(lock_for('alpha'))
         with self.assertRaisesRegex(ResolutionError, 'lock-bound acknowledgement'):
             resolve_profile(ModuleCatalog((critical,)), profile('alpha'))
 
@@ -378,7 +436,7 @@ class ResolverTest(unittest.TestCase):
             'alpha',
             acknowledgements=[{
                 'module': 'alpha',
-                'lock_sha256': lock_digest,
+                'lock_sha256': actual_lock_digest,
                 'output_scope': 'local-unpublished',
             }],
         )
@@ -391,7 +449,7 @@ class ResolverTest(unittest.TestCase):
             'alpha',
             acknowledgements=[{
                 'module': 'alpha',
-                'lock_sha256': lock_digest,
+                'lock_sha256': actual_lock_digest,
                 'output_scope': 'private',
             }],
         )
@@ -410,12 +468,12 @@ class ResolverTest(unittest.TestCase):
             resolve_profile(ModuleCatalog((critical,)), wrong_lock)
 
     def test_acknowledgements_must_bind_selected_critical_modules(self) -> None:
-        lock_digest = 'b' * 64
+        arbitrary_lock_digest = 'b' * 64
         unused = profile(
             'alpha',
             acknowledgements=[{
                 'module': 'unused',
-                'lock_sha256': lock_digest,
+                'lock_sha256': arbitrary_lock_digest,
                 'output_scope': 'local-unpublished',
             }],
         )
@@ -426,12 +484,220 @@ class ResolverTest(unittest.TestCase):
             'alpha',
             acknowledgements=[{
                 'module': 'alpha',
-                'lock_sha256': lock_digest,
+                'lock_sha256': arbitrary_lock_digest,
                 'output_scope': 'local-unpublished',
             }],
         )
         with self.assertRaisesRegex(ResolutionError, 'do not require'):
             resolve_profile(ModuleCatalog((module('alpha'),)), unnecessary)
+
+    def test_experimental_acknowledgement_binds_catalog_text_lock_and_scope(
+        self,
+    ) -> None:
+        consent = 'I accept experimental device risk for this exact catalog entry.'
+
+        def make_experimental(data):
+            data['status'] = 'experimental'
+            data['experimental_opt_in'] = {
+                'required': True,
+                'acknowledgement': consent,
+            }
+
+        experimental = module('alpha', make_experimental)
+        actual_lock_digest = lock_digest(lock_for('alpha'))
+        with self.assertRaisesRegex(
+            ResolutionError,
+            'requires an explicit experimental acknowledgement',
+        ):
+            resolve_profile(ModuleCatalog((experimental,)), profile('alpha'))
+
+        accepted = profile(
+            'alpha',
+            experimental_acknowledgements=[
+                {
+                    'module': 'alpha',
+                    'lock_sha256': actual_lock_digest,
+                    'output_scope': 'local-unpublished',
+                    'acknowledgement': consent,
+                }
+            ],
+        )
+        self.assertEqual(
+            ('alpha',),
+            resolve_profile(ModuleCatalog((experimental,)), accepted).selected_modules,
+        )
+
+        for field, value in (
+            ('lock_sha256', 'b' * 64),
+            ('output_scope', 'private'),
+            ('acknowledgement', f'{consent} changed'),
+        ):
+            stale_entry = {
+                'module': 'alpha',
+                'lock_sha256': actual_lock_digest,
+                'output_scope': 'local-unpublished',
+                'acknowledgement': consent,
+            }
+            stale_entry[field] = value
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(
+                    ResolutionError,
+                    'experimental acknowledgement is stale or wrong',
+                ),
+            ):
+                resolve_profile(
+                    ModuleCatalog((experimental,)),
+                    profile(
+                        'alpha',
+                        experimental_acknowledgements=[stale_entry],
+                    ),
+                )
+
+    def test_experimental_acknowledgements_are_exact_and_never_global(self) -> None:
+        consent = 'I accept alpha experimental risk.'
+
+        def make_experimental(data):
+            data['status'] = 'experimental'
+            data['experimental_opt_in'] = {
+                'required': True,
+                'acknowledgement': consent,
+            }
+
+        experimental = module('alpha', make_experimental)
+        unused = profile(
+            'alpha',
+            experimental_acknowledgements=[
+                {
+                    'module': 'unused',
+                    'lock_sha256': 'b' * 64,
+                    'output_scope': 'local-unpublished',
+                    'acknowledgement': consent,
+                }
+            ],
+        )
+        with self.assertRaisesRegex(
+            ResolutionError,
+            'experimental acknowledgements reference unselected modules: unused',
+        ):
+            resolve_profile(ModuleCatalog((experimental,)), unused)
+
+        unnecessary = profile(
+            'alpha',
+            experimental_acknowledgements=[
+                {
+                    'module': 'alpha',
+                    'lock_sha256': lock_digest(lock_for('alpha')),
+                    'output_scope': 'local-unpublished',
+                    'acknowledgement': consent,
+                }
+            ],
+        )
+        with self.assertRaisesRegex(
+            ResolutionError,
+            'modules without an experimental opt-in policy: alpha',
+        ):
+            resolve_profile(ModuleCatalog((module('alpha'),)), unnecessary)
+
+        descriptive = module(
+            'alpha',
+            lambda data: data.update(
+                {
+                    'status': 'experimental',
+                    'adapter': None,
+                    'lifecycle': 'external-reference',
+                }
+            ),
+        )
+        with self.assertRaisesRegex(
+            ResolutionError,
+            'has no experimental opt-in policy and cannot be selected',
+        ):
+            resolve_profile(ModuleCatalog((descriptive,)), profile('alpha'))
+
+    def test_experimental_and_critical_acknowledgements_are_independent(self) -> None:
+        consent = 'I accept alpha experimental risk.'
+
+        def make_experimental_critical(data):
+            data['status'] = 'experimental'
+            data['experimental_opt_in'] = {
+                'required': True,
+                'acknowledgement': consent,
+            }
+            data['acknowledgement_required'] = True
+            data['warnings'] = [
+                {
+                    'code': 'critical-risk',
+                    'severity': 'critical',
+                    'message': 'Review.',
+                }
+            ]
+
+        experimental = module('alpha', make_experimental_critical)
+        actual_lock_digest = lock_digest(lock_for('alpha'))
+        experimental_only = profile(
+            'alpha',
+            experimental_acknowledgements=[
+                {
+                    'module': 'alpha',
+                    'lock_sha256': actual_lock_digest,
+                    'output_scope': 'local-unpublished',
+                    'acknowledgement': consent,
+                }
+            ],
+        )
+        with self.assertRaisesRegex(ResolutionError, 'lock-bound acknowledgement'):
+            resolve_profile(ModuleCatalog((experimental,)), experimental_only)
+
+    def test_experimental_acknowledgements_are_canonical_in_the_fingerprint(
+        self,
+    ) -> None:
+        def experimental(id, consent):
+            return module(
+                id,
+                lambda data: data.update(
+                    {
+                        'status': 'experimental',
+                        'experimental_opt_in': {
+                            'required': True,
+                            'acknowledgement': consent,
+                        },
+                    }
+                ),
+            )
+
+        alpha = experimental('alpha', 'I accept alpha risk.')
+        beta = experimental('beta', 'I accept beta risk.')
+        selected_lock = lock_for('alpha', 'beta')
+        actual_lock_digest = lock_digest(selected_lock)
+        acknowledgements = [
+            {
+                'module': selected.id,
+                'lock_sha256': actual_lock_digest,
+                'output_scope': 'local-unpublished',
+                'acknowledgement': selected.experimental_opt_in.acknowledgement,
+            }
+            for selected in (alpha, beta)
+        ]
+        first = resolve_profile(
+            ModuleCatalog((beta, alpha)),
+            profile(
+                'beta',
+                'alpha',
+                experimental_acknowledgements=acknowledgements,
+            ),
+            lock=selected_lock,
+        )
+        second = resolve_profile(
+            ModuleCatalog((alpha, beta)),
+            profile(
+                'alpha',
+                'beta',
+                experimental_acknowledgements=list(reversed(acknowledgements)),
+            ),
+            lock=selected_lock,
+        )
+        self.assertEqual(first.fingerprint, second.fingerprint)
 
 
 if __name__ == '__main__':

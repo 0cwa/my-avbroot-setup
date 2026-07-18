@@ -14,6 +14,9 @@ from lib.modules.custota import CustotaModule
 from lib.modules.msd import MSDModule
 from lib.modules.oemunlockonboot import OEMUnlockOnBootModule
 from lib.modules.registry import (
+    AdapterRegistration,
+    LOCKED_ADAPTERS,
+    locked_adapter_factories,
     module_argument_dest,
     module_signature_argument_dest,
 )
@@ -37,6 +40,33 @@ EXPECTED_CONSTRUCTORS = [
 
 
 class ModuleRegistryTest(unittest.TestCase):
+    def test_locked_registry_is_separate_and_disabled_by_default(self) -> None:
+        self.assertEqual((), LOCKED_ADAPTERS)
+        self.assertEqual({}, locked_adapter_factories())
+
+    def test_locked_registry_rejects_callable_that_is_not_module_class(self) -> None:
+        registration = AdapterRegistration(
+            id='locked-test',
+            constructor_module='lib.modules.locked-test',
+            constructor_name='constructor',
+            verification_schemes=('sha256',),
+            trusted_signers=(),
+            digest_required=True,
+        )
+        fake_module = mock.Mock()
+        fake_module.constructor = mock.Mock(return_value=object())
+
+        with (
+            mock.patch(
+                'lib.modules.registry.import_module',
+                return_value=fake_module,
+            ),
+            self.assertRaisesRegex(RuntimeError, 'Invalid locked module constructor'),
+        ):
+            locked_adapter_factories((registration,))
+
+        fake_module.constructor.assert_not_called()
+
     def test_exact_legacy_registry_order(self) -> None:
         registry = modules.all_modules()
         self.assertEqual(EXPECTED_MODULES, list(registry))

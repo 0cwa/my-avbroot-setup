@@ -52,7 +52,29 @@ python3 module-tool.py lock verify --lock locks/artifacts.lock.json
 On success, the command prints the canonical lock JSON. It does not contact the
 network or verify cache objects; those are separate stages. A lock pins each
 artifact's immutable URL, permitted redirect origins, version, exact byte size,
-SHA-256, and any APK or archive identity policy.
+SHA-256, role, and any APK or archive identity policy. Artifact roles are
+`injection-input`, `corresponding-source`, and `verification-evidence`;
+`injection-input` remains the default so existing schema-v1 lock producers keep
+loading deterministically.
+
+An archive allowlisted member can include its own nested `apk` identity, using
+the same exact package name, versionCode, and signer fields as a top-level APK.
+This lets a reviewed provider lock an APK inside an OTA container without
+treating the container's signature as the APK's identity.
+
+Artifacts may also carry two independent records:
+
+- `source` pins the HTTPS source URL and revision. Its optional
+  `corresponding_source_artifact` names another artifact in the same module.
+- `legal` records the SPDX/`LicenseRef`, whether corresponding-source delivery
+  is required, and allowed output scopes.
+
+A source-required binary must link to an artifact whose role is exactly
+`corresponding-source`; the linked artifact must exist in the same module and
+its locked version must equal the declared source revision. Missing, self,
+wrong-role, and wrong-revision links fail closed. This supports an Apache-2.0
+FPE binary with pinned upstream source metadata and a GPL client whose exact
+corresponding-source archive travels as a separately verified lock artifact.
 
 `lock update` accepts `--output` and repeatable `--version-code` options for
 future reviewed providers. Their meaning is provider-specific, and no provider
@@ -126,10 +148,35 @@ python3 module-tool.py resolve \
 ```
 
 Resolution validates dependencies, conflicts, ROM status, root mode, ABI/API,
-declared providers and capabilities, legal output scope, and lock-bound critical
-acknowledgements. Unknown or ambiguous data fails closed. Output includes the
+declared providers and capabilities, legal output scope, lock-bound critical
+acknowledgements, and affirmative consent for every globally experimental
+selection. Unknown or ambiguous data fails closed. Output includes the
 selected modules, structured decisions and warnings, output scope, and a stable
 fingerprint. Resolution does not fetch artifacts or mutate an OTA.
+
+Experimental consent is a per-module structured profile entry; there is no
+global `allow_experimental` switch and no consent default. It binds the module
+ID, the SHA-256 of the actual canonical lock bytes, the selected output scope,
+and the catalog's exact acknowledgement text:
+
+```toml
+[[experimental_acknowledgements]]
+module = 'example-experimental-module'
+lock_sha256 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+output_scope = 'local-unpublished'
+acknowledgement = 'I accept that this module has not passed supported-status gates.'
+```
+
+Changing the lock, scope, or catalog text makes the entry stale. Entries for
+unselected or non-experimental modules are rejected. An experimental module
+without an `experimental_opt_in` catalog policy cannot be selected. Critical
+warnings continue to use the independent `[[acknowledgements]]` entries, so a
+module that is both experimental and critical must satisfy both policies.
+
+The resolver consumes the lock digest returned by the canonical lock loader.
+That digest covers the actual accepted input bytes, including the supported
+pre-extension schema-v1 canonical representation; it is intentionally not
+recomputed from the in-memory model's current serialization.
 
 ## Failure behavior
 

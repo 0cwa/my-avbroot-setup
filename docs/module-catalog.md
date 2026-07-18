@@ -42,6 +42,11 @@ Every v2 manifest records these independent decisions:
   record. Local-only entries can only use `local-unpublished` scope.
 - structured `dependencies`, `conflicts`, `warnings`, and `reasons`. A
   `critical` warning requires `acknowledgement_required = true`.
+- `experimental_opt_in`: explicit catalog consent text for a globally
+  experimental module that has a reviewed adapter. Its `required` field must
+  be true. The module must remain disabled in both default namespaces. A later
+  profile/resolver interface must record affirmative consent to this text;
+  merely loading the catalog does not grant it.
 
 The capability and policy fields are declarations for a later resolver. Merely
 loading a manifest does not prove the target ROM supplies a capability or grant
@@ -112,6 +117,26 @@ cache_policy = 'read-write'
 allowed_output_scopes = ['local-unpublished']
 ```
 
+A globally experimental module may retain a reviewed injection adapter while
+device acceptance work is incomplete. Such a manifest adds this block and
+keeps both defaults false:
+
+```toml
+[experimental_opt_in]
+required = true
+acknowledgement = 'I accept that this module has not passed supported-status gates.'
+```
+
+The block is invalid on globally supported or incompatible modules. It is
+optional for descriptive experimental entries that have no adapter. Resolution
+nevertheless fails closed for every selected globally experimental module that
+lacks this policy. Selection requires a per-module
+`[[experimental_acknowledgements]]` profile entry bound to the actual canonical
+lock SHA-256, output scope, and this exact acknowledgement text. There is no
+global experimental switch or default consent. Critical-warning
+`[[acknowledgements]]` remain independent; a module governed by both policies
+must provide both entries.
+
 Omit `root_provider` or `zygisk_provider` when a module does not require one;
 use `any` when any recognized provider is acceptable. Concrete recognized root
 providers are `magisk`, `kernelsu`, and `apatch`; Zygisk providers additionally
@@ -147,11 +172,14 @@ patch behavior are unchanged.
 
 ## Adapter safety rules
 
-Supported executable lifecycles require a reviewed internal adapter.
-Experimental and incompatible modules cannot register one or be enabled by
-default. `external-reference` and `user-direct-install` entries never register
-an injection adapter. A supported adapter's verification schemes, trust-root
-values, and digest requirement must exactly match the static trusted registry.
+Supported executable lifecycles require a reviewed internal adapter. A globally
+experimental module may register one only when `experimental_opt_in` is present
+and both helper and Pixene profile defaults are false. Incompatible modules
+cannot register an adapter. `external-reference` and `user-direct-install`
+entries never register an injection adapter. Every registered adapter,
+including an experimental one, must exist in the static trusted registry and
+its verification schemes, trust-root values, and digest requirement must match
+that registration exactly.
 
 Dependencies and conflicts must reference known module IDs, cannot contain the
 module itself, and cannot overlap. This permits explicit mutually exclusive

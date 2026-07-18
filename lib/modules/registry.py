@@ -4,7 +4,13 @@
 """Static, data-only registry of trusted internal module adapters."""
 
 import dataclasses
+from importlib import import_module
 import re
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lib.modules import Module
 
 
 MODULE_ID_PATTERN = re.compile(r'^[a-z][a-z0-9-]*$')
@@ -46,6 +52,52 @@ INTERNAL_ADAPTERS = (
     _chenxiaolong_adapter('msd', 'MSDModule'),
     _chenxiaolong_adapter('oemunlockonboot', 'OEMUnlockOnBootModule'),
 )
+
+
+# Locked adapters are deliberately separate from the legacy registry.  In
+# particular, adding an adapter here must never add a legacy --module-* option
+# or alter ``modules.all_modules()``.  Entries are reviewed source code, not
+# names supplied by a catalog, profile, lock, or command line.
+LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = ()
+
+
+def locked_adapter_factories(
+    registrations: Sequence[AdapterRegistration] = LOCKED_ADAPTERS,
+) -> dict[str, Callable[[object], 'Module']]:
+    """Load the trusted, static factories used by the locked patch boundary."""
+
+    from lib.modules import Module
+
+    result: dict[str, Callable[[object], Module]] = {}
+    for registration in registrations:
+        if (
+            not MODULE_ID_PATTERN.fullmatch(registration.id)
+            or registration.id in result
+        ):
+            raise RuntimeError(
+                f'Invalid locked adapter registration: {registration.id!r}'
+            )
+        adapter_module = import_module(registration.constructor_module)
+        constructor = getattr(
+            adapter_module,
+            registration.constructor_name,
+            None,
+        )
+        # Validate the registry entry before invoking it.  Merely accepting a
+        # callable would allow an accidentally registered function to execute
+        # arbitrary work before ``construct_locked_adapters()`` can inspect its
+        # return value.
+        if not isinstance(constructor, type) or not issubclass(
+            constructor,
+            Module,
+        ):
+            raise RuntimeError(
+                'Invalid locked module constructor: '
+                f'{registration.constructor_module}.'
+                f'{registration.constructor_name}'
+            )
+        result[registration.id] = constructor
+    return result
 
 
 def module_argument_dest(module_id: str) -> str:
