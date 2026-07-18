@@ -15,6 +15,7 @@ from lib.modules.locks import (
     load_canonical_lock,
     verify_locked_artifacts,
 )
+from lib.modules.providers import get_lock_update_provider
 from lib.modules.resolver import ResolutionError, load_profile, resolve_profile
 from lib.modules.registry import MODULE_ID_PATTERN
 
@@ -76,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     lock_update.add_argument('module', type=_module_id)
     lock_update.add_argument('--output', type=Path)
     lock_update.add_argument('--version-code', type=_positive_int, action='append')
+    lock_update.add_argument('--client-version-code', type=_positive_int)
+    lock_update.add_argument('--fpe-ota-version-code', type=_positive_int)
 
     artifacts = commands.add_parser(
         'artifacts',
@@ -115,12 +118,33 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _update_lock(args: argparse.Namespace) -> None:
-    # Floating metadata is reachable only through this explicit command. Phase
-    # 1 deliberately ships without a provider; providers are added to a static,
-    # reviewed registry alongside their trust-chain implementation.
-    raise LockError(
-        f'no reviewed lock-update provider is available for module: {args.module}'
-    )
+    # Floating metadata is reachable only through this explicit command and a
+    # statically reviewed provider.  A module ID is never an import path.
+    provider = get_lock_update_provider(args.module)
+    if provider is None:
+        raise LockError(
+            f'no reviewed lock-update provider is available for module: {args.module}'
+        )
+    if args.module == 'fdroid-privileged-extension':
+        if args.version_code:
+            raise LockError(
+                'F-Droid requires named --client-version-code and '
+                '--fpe-ota-version-code selectors'
+            )
+        if args.output is None:
+            raise LockError('F-Droid lock update requires an explicit --output path')
+        if args.client_version_code is None or args.fpe_ota_version_code is None:
+            raise LockError(
+                'F-Droid lock update requires both explicit versionCode selectors'
+            )
+        lock = provider(
+            output=args.output,
+            client_version_code=args.client_version_code,
+            fpe_ota_version_code=args.fpe_ota_version_code,
+        )
+        print(lock.as_json(), end='')
+        return
+    raise AssertionError('reviewed provider has no CLI argument binding')
 
 
 def _dispatch(args: argparse.Namespace) -> None:
