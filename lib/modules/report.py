@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import tempfile
+from typing import Literal
 
 from lib.modules.verified import VerifiedSelection
 
@@ -15,6 +16,10 @@ from lib.modules.verified import VerifiedSelection
 @dataclasses.dataclass(frozen=True)
 class AdapterPatchResult:
     injected_paths: tuple[str, ...]
+    path_statuses: tuple[
+        tuple[str, Literal['created', 'already-identical']],
+        ...,
+    ] = ()
 
     def __post_init__(self) -> None:
         if len(self.injected_paths) != len(set(self.injected_paths)):
@@ -37,6 +42,15 @@ class AdapterPatchResult:
                 or any(part in ('', '.', '..') for part in path.parts[1:])
             ):
                 raise ValueError(f'invalid injected Android path: {value!r}')
+        if self.path_statuses:
+            status_paths = tuple(path for path, _ in self.path_statuses)
+            if status_paths != self.injected_paths:
+                raise ValueError(
+                    'path statuses must exactly match canonical injected paths'
+                )
+            for _, status in self.path_statuses:
+                if status not in ('created', 'already-identical'):
+                    raise ValueError(f'invalid injected path status: {status!r}')
 
 
 def build_patch_report(
@@ -51,7 +65,7 @@ def build_patch_report(
 
     artifacts: list[dict[str, object]] = []
     signers: list[dict[str, str]] = []
-    injected_paths: list[dict[str, str]] = []
+    injected_paths: list[dict[str, object]] = []
     warnings: list[dict[str, str]] = []
     seen_paths: set[str] = set()
     for context in selection.contexts:
@@ -62,7 +76,7 @@ def build_patch_report(
                 'value': value,
             })
         for artifact in context.artifacts:
-            artifacts.append({
+            artifact_report: dict[str, object] = {
                 'module': context.module_id,
                 'artifact': artifact.id,
                 'kind': artifact.kind,
@@ -70,9 +84,28 @@ def build_patch_report(
                 'version': artifact.version,
                 'size': artifact.size,
                 'sha256': artifact.sha256,
+                'apk_package_name': artifact.apk_package_name,
+                'apk_version_code': artifact.apk_version_code,
                 'license': artifact.license,
+                'source_offer_required': artifact.source_offer_required,
+                'corresponding_source_artifact': (
+                    artifact.corresponding_source_artifact
+                ),
                 'allowed_output_scopes': list(artifact.allowed_output_scopes),
-            })
+            }
+            if artifact.archive_members:
+                artifact_report['archive_members'] = [
+                    {
+                        'name': member.name,
+                        'size': member.size,
+                        'sha256': member.sha256,
+                        'apk_package_name': member.apk_package_name,
+                        'apk_version_code': member.apk_version_code,
+                        'apk_signer_sha256': member.apk_signer_sha256,
+                    }
+                    for member in artifact.archive_members
+                ]
+            artifacts.append(artifact_report)
             if artifact.apk_signer_sha256 is not None:
                 signers.append({
                     'module': context.module_id,
@@ -90,13 +123,21 @@ def build_patch_report(
                 })
         for warning in context.decision.warnings:
             warnings.append({'module': context.module_id, **warning})
-        for path in result_by_module[context.module_id].injected_paths:
+        adapter_result = result_by_module[context.module_id]
+        status_by_path = dict(adapter_result.path_statuses)
+        for path in adapter_result.injected_paths:
             if path in seen_paths:
                 raise ValueError(
                     f'multiple locked adapters injected the same path: {path}'
                 )
             seen_paths.add(path)
-            injected_paths.append({'module': context.module_id, 'path': path})
+            path_report: dict[str, object] = {
+                'module': context.module_id,
+                'path': path,
+            }
+            if path in status_by_path:
+                path_report['status'] = status_by_path[path]
+            injected_paths.append(path_report)
 
     resolution = selection.resolution
     return {

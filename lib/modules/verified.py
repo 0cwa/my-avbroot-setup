@@ -31,6 +31,18 @@ from lib.modules.resolver import (
 
 
 @dataclasses.dataclass(frozen=True)
+class VerifiedArchiveMember:
+    """Immutable lock metadata for one verified allowlisted archive member."""
+
+    name: str
+    size: int
+    sha256: str
+    apk_package_name: str | None
+    apk_version_code: int | None
+    apk_signer_sha256: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class VerifiedArtifact:
     """Locked metadata plus capability-based access to one verified inode."""
 
@@ -40,9 +52,14 @@ class VerifiedArtifact:
     version: str
     size: int
     sha256: str
+    apk_package_name: str | None
+    apk_version_code: int | None
     apk_signer_sha256: str | None
+    archive_members: tuple[VerifiedArchiveMember, ...]
     archive_apk_signers: tuple[tuple[str, str], ...]
     license: str | None
+    source_offer_required: bool
+    corresponding_source_artifact: str | None
     allowed_output_scopes: tuple[str, ...]
     _source: BinaryIO = dataclasses.field(repr=False, compare=False)
 
@@ -213,15 +230,46 @@ def open_verified_selection(
                     version=artifact.version,
                     size=artifact.size,
                     sha256=artifact.sha256,
+                    apk_package_name=(
+                        artifact.apk.package_name if artifact.apk else None
+                    ),
+                    apk_version_code=(
+                        artifact.apk.version_code if artifact.apk else None
+                    ),
                     apk_signer_sha256=(
                         artifact.apk.signer_sha256 if artifact.apk else None
                     ),
+                    archive_members=tuple(
+                        VerifiedArchiveMember(
+                            name=member.name,
+                            size=member.size,
+                            sha256=member.sha256,
+                            apk_package_name=(
+                                member.apk.package_name if member.apk else None
+                            ),
+                            apk_version_code=(
+                                member.apk.version_code if member.apk else None
+                            ),
+                            apk_signer_sha256=(
+                                member.apk.signer_sha256 if member.apk else None
+                            ),
+                        )
+                        for member in artifact.archive.members
+                    ) if artifact.archive else (),
                     archive_apk_signers=tuple(
                         (member.name, member.apk.signer_sha256)
                         for member in artifact.archive.members
                         if member.apk is not None
                     ) if artifact.archive else (),
                     license=artifact.legal.license if artifact.legal else None,
+                    source_offer_required=(
+                        artifact.legal.source_offer_required
+                        if artifact.legal else False
+                    ),
+                    corresponding_source_artifact=(
+                        artifact.source.corresponding_source_artifact
+                        if artifact.source else None
+                    ),
                     allowed_output_scopes=(
                         artifact.legal.allowed_output_scopes
                         if artifact.legal else ()

@@ -10,10 +10,13 @@ from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tempfile
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 import zipfile
 
 from lib.filesystem import CpioFs, ExtFs
+
+if TYPE_CHECKING:
+    from lib.modules.report import AdapterPatchResult
 
 
 logger = logging.getLogger(__name__)
@@ -271,7 +274,7 @@ class Module(ABC):
         ext_fs: dict[str, ExtFs],
         sepolicies: Iterable[Path],
         compatible_sepolicy: bool = False,
-    ) -> None:
+    ) -> 'AdapterPatchResult | None':
         ...
 
 
