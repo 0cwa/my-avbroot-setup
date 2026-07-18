@@ -16,6 +16,10 @@ import tomlkit
 from lib import external, modules
 from lib import filesystem
 from lib.filesystem import CpioFs, CpioInfo, ExtFs, ExtInfo
+from lib.modules.registry import (
+    module_argument_dest,
+    module_signature_argument_dest,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -157,11 +161,13 @@ def parse_args():
     for name in modules.all_modules():
         parser.add_argument(
             f'--module-{name}',
+            dest=module_argument_dest(name),
             type=Path,
             help=f'{name} module zip',
         )
         parser.add_argument(
             f'--module-{name}-sig',
+            dest=module_signature_argument_dest(name),
             type=Path,
             help=f'{name} module zip signature',
         )
@@ -175,10 +181,11 @@ def parse_args():
         args.patch_arg = ['--rootless']
 
     for name in modules.all_modules():
-        sig_key = f'module_{name}_sig'
+        module_key = module_argument_dest(name)
+        sig_key = module_signature_argument_dest(name)
 
         if getattr(args, sig_key) is None:
-            zip_path: Path = getattr(args, f'module_{name}')
+            zip_path: Path = getattr(args, module_key)
             setattr(args, sig_key, Path(f'{zip_path}.sig'))
 
     return args
@@ -202,8 +209,11 @@ def run(args: argparse.Namespace, temp_dir: Path):
     need_sepolicies = False
 
     for name, constructor in modules.all_modules().items():
-        zip_path: Path | None = getattr(args, f'module_{name}')
-        sig_path: Path | None = getattr(args, f'module_{name}_sig')
+        zip_path: Path | None = getattr(args, module_argument_dest(name))
+        sig_path: Path | None = getattr(
+            args,
+            module_signature_argument_dest(name),
+        )
 
         if zip_path is None or sig_path is None:
             continue

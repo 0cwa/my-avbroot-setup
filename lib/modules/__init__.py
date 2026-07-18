@@ -4,6 +4,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 import dataclasses
+from importlib import import_module
 import logging
 from pathlib import Path, PurePosixPath
 import shutil
@@ -275,16 +276,24 @@ class Module(ABC):
 
 
 def all_modules() -> dict[str, Callable[[Path, Path], Module]]:
-    from lib.modules.alterinstaller import AlterInstallerModule
-    from lib.modules.bcr import BCRModule
-    from lib.modules.custota import CustotaModule
-    from lib.modules.msd import MSDModule
-    from lib.modules.oemunlockonboot import OEMUnlockOnBootModule
+    from lib.modules.catalog import load_catalog
+    from lib.modules.registry import INTERNAL_ADAPTERS
 
-    return {
-        'alterinstaller': AlterInstallerModule,
-        'bcr': BCRModule,
-        'custota': CustotaModule,
-        'msd': MSDModule,
-        'oemunlockonboot': OEMUnlockOnBootModule,
-    }
+    # Validate the declarative side before exposing any executable adapter.
+    load_catalog()
+
+    result: dict[str, Callable[[Path, Path], Module]] = {}
+    for registration in INTERNAL_ADAPTERS:
+        adapter_module = import_module(registration.constructor_module)
+        constructor = getattr(adapter_module, registration.constructor_name, None)
+
+        if not isinstance(constructor, type) or not issubclass(constructor, Module):
+            raise RuntimeError(
+                f'Invalid internal module constructor: '
+                f'{registration.constructor_module}.'
+                f'{registration.constructor_name}'
+            )
+
+        result[registration.id] = constructor
+
+    return result

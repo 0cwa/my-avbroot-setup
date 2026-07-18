@@ -25,6 +25,10 @@ The authoritative split is in [`upstream-disposition.md`](./upstream-disposition
 - The CIL fallback path (`patch_cil_policy`, `get_cil_rules_for_partition`) and `lib/modules/cil_rules.py`.
 - `patch_vendor_cil_for_ueventd` (the IPA / `vendor_firmware_file` bootloop fix).
 - The compatible-mode multi-partition `seapp_contexts` append.
+- The focused module-catalog foundation used by PixeneOS to enumerate and select
+  reviewed adapters deterministically. It keeps executable constructor targets
+  in a static trusted registry, preserves upstream's existing module CLI, and
+  does not fetch artifacts or execute arbitrary installer scripts.
 
 Everything else either belongs upstream (and will be PR'd separately) or should be dropped (formatter churn, license-wording revert, leaky log line).
 
