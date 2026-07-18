@@ -10,6 +10,9 @@ from lib import modules
 from lib.modules.alterinstaller import AlterInstallerModule
 from lib.modules.bcr import BCRModule
 from lib.modules.custota import CustotaModule
+from lib.modules.fdroid_privileged_extension import (
+    FDroidPrivilegedExtensionModule,
+)
 from lib.modules.msd import MSDModule
 from lib.modules.oemunlockonboot import OEMUnlockOnBootModule
 from lib.modules.registry import (
@@ -37,9 +40,15 @@ EXPECTED_CONSTRUCTORS = [
 
 
 class ModuleRegistryTest(unittest.TestCase):
-    def test_locked_registry_is_separate_and_disabled_by_default(self) -> None:
-        self.assertEqual((), LOCKED_ADAPTERS)
-        self.assertEqual({}, locked_adapter_factories())
+    def test_locked_registry_is_separate_from_legacy_modules(self) -> None:
+        self.assertEqual(
+            ['fdroid-privileged-extension'],
+            [registration.id for registration in LOCKED_ADAPTERS],
+        )
+        self.assertEqual(
+            {'fdroid-privileged-extension': FDroidPrivilegedExtensionModule},
+            locked_adapter_factories(),
+        )
 
     def test_locked_registry_rejects_callable_that_is_not_module_class(self) -> None:
         registration = AdapterRegistration(

@@ -35,6 +35,7 @@ import tomlkit
 from lib.modules.registry import (
     AdapterRegistration,
     INTERNAL_ADAPTERS,
+    LOCKED_ADAPTERS,
     MODULE_ID_PATTERN,
 )
 
@@ -842,7 +843,9 @@ class ModuleCatalog:
 
 def load_catalog(
     directory: Path = MANIFESTS_DIR,
-    registrations: Sequence[AdapterRegistration] = INTERNAL_ADAPTERS,
+    registrations: Sequence[AdapterRegistration] = (
+        INTERNAL_ADAPTERS + LOCKED_ADAPTERS
+    ),
 ) -> ModuleCatalog:
     registration_by_id: dict[str, AdapterRegistration] = {}
     for registration in registrations:

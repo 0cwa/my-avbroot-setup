@@ -253,6 +253,17 @@ class LockedPatchBoundaryTest(unittest.TestCase):
                     (('payload.apk', 'ab' * 32),),
                     selection.contexts[0].artifacts[0].archive_apk_signers,
                 )
+                self.assertEqual(
+                    [('payload.apk', len(apk_data), hashlib.sha256(apk_data).hexdigest())],
+                    [
+                        (member.name, member.size, member.sha256)
+                        for member in selection.contexts[0].artifacts[0].archive_members
+                    ],
+                )
+                member = selection.contexts[0].artifacts[0].archive_members[0]
+                self.assertEqual('org.example.fixture', member.apk_package_name)
+                self.assertEqual(7, member.apk_version_code)
+                self.assertEqual('ab' * 32, member.apk_signer_sha256)
 
         verify_identity.assert_called_once()
         verified_path, expected = verify_identity.call_args.args
@@ -318,6 +329,13 @@ class LockedPatchBoundaryTest(unittest.TestCase):
     def test_injected_filesystem_root_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, 'invalid injected Android path'):
             AdapterPatchResult(('/',))
+
+    def test_path_statuses_must_exactly_match_injected_paths(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'exactly match'):
+            AdapterPatchResult(
+                ('/system/app/Fixture/Fixture.apk',),
+                (('/system/app/Other/Other.apk', 'created'),),
+            )
 
     def test_adapter_is_constructed_before_ota_work_and_report_is_stable(self) -> None:
         events: list[str] = []

@@ -17,6 +17,10 @@ MODULE_ID_PATTERN = re.compile(r'^[a-z][a-z0-9-]*$')
 
 SSH_SIGNER_CHENXIAOLONG = \
     'ssh-ed25519-sha256:Ct0HoRyrFLrnF9W+A/BKEiJmwx7yWkgaW/JvghKrboA'
+FDROID_REPOSITORY_CERT_SHA256 = \
+    '43238D512C1E5EB2D6569F4A3AFBF5523418B82E0A3ED1552770ABB9A9C9CCAB'
+FDROID_OPENPGP_PRIMARY = '37D2C98789D8311948394E3E41E7044E1DBA2E89'
+FDROID_OPENPGP_SUBKEY = '802A9799016112346E1FEFF47A029E54DD5DCE7A'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -90,7 +94,26 @@ def legacy_cli_module_types() -> tuple[type['LegacyCliModule'], ...]:
 # particular, adding an adapter here must never add a legacy --module-* option
 # or alter ``modules.all_modules()``.  Entries are reviewed source code, not
 # names supplied by a catalog, profile, lock, or command line.
-LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = ()
+LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = (
+    AdapterRegistration(
+        id='fdroid-privileged-extension',
+        constructor_module='lib.modules.fdroid_privileged_extension',
+        constructor_name='FDroidPrivilegedExtensionModule',
+        verification_schemes=(
+            'sha256',
+            'jar-signature',
+            'openpgp-signature',
+            'apk-signature',
+        ),
+        trusted_signers=(
+            FDROID_REPOSITORY_CERT_SHA256,
+            FDROID_OPENPGP_PRIMARY,
+            FDROID_OPENPGP_SUBKEY,
+            FDROID_REPOSITORY_CERT_SHA256,
+        ),
+        digest_required=True,
+    ),
+)
 
 
 def locked_adapter_factories(
