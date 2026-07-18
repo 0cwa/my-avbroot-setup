@@ -27,9 +27,9 @@ Every v2 manifest records these independent decisions:
   defaults with no implicit inheritance between them.
 - `verification.trust_roots`: typed identities. Valid types are
   `x509-cert-sha256`, `apk-signer-sha256`, `openpgp-primary`,
-  `openpgp-subkey`, `ssh-key-sha256`, and `github-attestation`. An OpenPGP
-  signature may be anchored by either a pinned primary-key fingerprint or a
-  pinned signing-subkey fingerprint.
+  `openpgp-subkey`, `ssh-key-sha256`, and `github-attestation`. OpenPGP
+  verification requires both the pinned primary-key fingerprint and the pinned
+  signing-subkey fingerprint.
 - `capabilities.requires` and `capabilities.provides`: root and Zygisk
   providers, selective signature spoofing, product privileged-app support,
   custom init/SELinux support, ABI constraints, and minimum/maximum API level.
