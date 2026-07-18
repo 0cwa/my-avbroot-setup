@@ -36,6 +36,28 @@ Install the required Python dependencies. This can also be done inside a venv or
 pip install -r requirements.txt
 ```
 
+The staged module preparation CLI keeps catalog resolution, lock updates,
+artifact acquisition, verification, and archive inspection separate from OTA
+mutation:
+
+```bash
+python3 module-tool.py catalog list --format json
+python3 module-tool.py lock verify --lock locks/artifacts.lock.json
+python3 module-tool.py artifacts fetch \
+    --lock locks/artifacts.lock.json --cache .artifact-cache
+python3 module-tool.py artifacts verify \
+    --lock locks/artifacts.lock.json --cache .artifact-cache
+python3 module-tool.py resolve \
+    --profile profiles/lineage.toml --lock locks/artifacts.lock.json \
+    --format json
+```
+
+Normal builds consume checked-in locks and never resolve “latest” versions.
+Only the explicit `lock update <module>` command may use a reviewed provider
+for floating upstream metadata; this Phase 1 foundation intentionally has no
+such provider yet. See [the module-tool guide](./docs/module-tool.md) for the
+complete command contract and offline/security boundaries.
+
 Then, run the patch script:
 
 ```bash
