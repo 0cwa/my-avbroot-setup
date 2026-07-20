@@ -304,6 +304,58 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             patch_script.run(args, self.root / 'work')
         verify.assert_not_called()
 
+    def test_locked_selection_validates_full_catalog(self) -> None:
+        args = SimpleNamespace(
+            module_lock=self.lock_path,
+            module_profile=self.profile_path,
+            module_cache=self.cache,
+            patch_report=self.root / 'report.json',
+            tool_runner_prefix=None,
+            pass_avb_env_var=None,
+            pass_ota_env_var=None,
+        )
+        with (
+            mock.patch.object(
+                patch_script,
+                'load_catalog',
+                side_effect=RuntimeError('corrupt locked-only manifest'),
+            ) as load,
+            mock.patch.object(patch_script, '_run') as run,
+            self.assertRaisesRegex(RuntimeError, 'corrupt locked-only manifest'),
+        ):
+            patch_script.run(args, self.root / 'work')
+
+        load.assert_called_once()
+        run.assert_not_called()
+
+    def test_legacy_run_does_not_validate_locked_catalog(self) -> None:
+        args = SimpleNamespace(
+            module_lock=None,
+            module_profile=None,
+            module_cache=None,
+            patch_report=None,
+            tool_runner_prefix=None,
+            pass_avb_env_var=None,
+            pass_ota_env_var=None,
+        )
+        with (
+            mock.patch.object(
+                patch_script,
+                'load_catalog',
+                side_effect=RuntimeError('missing locked-only manifest'),
+            ) as load,
+            mock.patch.object(
+                patch_script,
+                '_run',
+                return_value='legacy-result',
+            ) as run,
+        ):
+            result = patch_script.run(args, self.root / 'work')
+
+        self.assertEqual('legacy-result', result)
+        load.assert_not_called()
+        run.assert_called_once_with(args, self.root / 'work', None, ())
+
     def test_untrusted_callable_factory_is_not_invoked(self) -> None:
         invoked = False
 

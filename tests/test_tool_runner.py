@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 PixeneOS
 # SPDX-License-Identifier: GPL-3.0-only
 
+from contextlib import redirect_stderr
+import io
 import os
 from pathlib import Path
 import sys
@@ -172,31 +174,49 @@ class ToolRunnerTest(unittest.TestCase):
             '["python3","bootstrap.py"]',
             '["/usr/bin/python3",""]',
             '["/usr/bin/python3","bad\\u0000arg"]',
+            '["/usr/bin/python3","bad\\narg"]',
+            '["/usr/bin/python3","bad\\u001farg"]',
+            '["/usr/bin/python3","bad\\u007farg"]',
+            '["/usr/bin/python3","--"]',
         )
 
         with mock.patch('lib.external.subprocess.check_call') as call:
             for value in invalid:
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     external.parse_tool_runner_prefix_json(value)
+            for prefix in (
+                ('/usr/bin/python3', 'bad\narg'),
+                ('/usr/bin/python3', '--'),
+            ):
+                with self.subTest(prefix=prefix), self.assertRaises(ValueError):
+                    external.configure_tool_runner(prefix)
 
         call.assert_not_called()
 
     def test_patch_cli_rejects_malformed_prefix_before_subprocess(self) -> None:
+        secret = 'not-json-SUPER-SECRET-RUNNER-TOKEN'
         argv = [
             'patch.py',
             '--input', 'ota.zip',
             '--sign-key-avb', 'avb.key',
             '--sign-key-ota', 'ota.key',
             '--sign-cert-ota', 'ota.crt',
-            '--tool-runner-prefix-json', '["python3"]',
+            '--tool-runner-prefix-json', secret,
         ]
+        stderr = io.StringIO()
         with (
             mock.patch.object(sys, 'argv', argv),
             mock.patch('lib.external.subprocess.check_call') as call,
+            redirect_stderr(stderr),
             self.assertRaises(SystemExit),
         ):
             patch_script.parse_args()
         call.assert_not_called()
+        self.assertNotIn(secret, stderr.getvalue())
+        self.assertIn(
+            '--tool-runner-prefix-json is invalid',
+            stderr.getvalue(),
+        )
 
     def test_configure_rejects_unknown_tool_without_subprocess(self) -> None:
         external.configure_tool_runner(PREFIX)
@@ -273,14 +293,18 @@ class ToolRunnerTest(unittest.TestCase):
                     Path('system.img'),
                     Path('work'),
                     external.SigningKey(
-                        Path('avb.key'), 'AVB_PASSWORD', None
+                        Path('relative/avb.key'),
+                        None,
+                        Path('relative/avb.pass'),
                     ),
                     True,
                 ),
                 [
                     'avbroot', 'avb', 'pack', '--quiet', '--output',
-                    str(Path('system.img').absolute()), '--key', 'avb.key',
-                    '--pass-env-var', 'AVB_PASSWORD', '--recompute-size',
+                    str(Path('system.img').absolute()), '--key',
+                    str(Path('relative/avb.key').absolute()), '--pass-file',
+                    str(Path('relative/avb.pass').absolute()),
+                    '--recompute-size',
                 ],
                 Path('work'),
             ),

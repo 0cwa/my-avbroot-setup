@@ -326,10 +326,8 @@ class LegacyCliModule(Module):
 
 @functools.cache
 def all_modules() -> list[type[LegacyCliModule]]:
-    from lib.modules.catalog import load_catalog
     from lib.modules.registry import legacy_cli_module_types
 
-    # Catalog data and executable adapters are validated independently. Only
-    # the reviewed legacy classes participate in argument parsing.
-    load_catalog()
+    # Legacy parsing depends only on this statically reviewed registry. Locked
+    # manifests are validated later, and only when locked selection is used.
     return list(legacy_cli_module_types())

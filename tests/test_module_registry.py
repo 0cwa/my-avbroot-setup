@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
 import argparse
+from contextlib import redirect_stdout
+import io
 from pathlib import Path
 import subprocess
 import sys
@@ -23,6 +25,7 @@ from lib.modules.registry import (
     locked_adapter_factories,
     module_argument_dest,
 )
+import patch as patch_script
 
 
 EXPECTED_MODULES = [
@@ -42,6 +45,9 @@ EXPECTED_CONSTRUCTORS = [
 
 
 class ModuleRegistryTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        modules.all_modules.cache_clear()
+
     def test_locked_registry_is_separate_from_legacy_modules(self) -> None:
         self.assertEqual(
             ['fdroid-privileged-extension'],
@@ -98,6 +104,24 @@ class ModuleRegistryTest(unittest.TestCase):
             positions.extend([module_position, signature_position])
 
         self.assertEqual(sorted(positions), positions)
+
+    def test_legacy_help_ignores_corrupt_locked_only_catalog(self) -> None:
+        modules.all_modules.cache_clear()
+        output = io.StringIO()
+        with (
+            mock.patch(
+                'lib.modules.catalog.load_catalog',
+                side_effect=RuntimeError('corrupt locked-only manifest'),
+            ) as load,
+            mock.patch.object(sys, 'argv', ['patch.py', '--help']),
+            redirect_stdout(output),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            patch_script.parse_args()
+
+        self.assertEqual(0, raised.exception.code)
+        self.assertIn('--module-bcr', output.getvalue())
+        load.assert_not_called()
 
     def test_hyphenated_locked_id_has_a_safe_destination(self) -> None:
         self.assertEqual('module_test_module', module_argument_dest('test-module'))

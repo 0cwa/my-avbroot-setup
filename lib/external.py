@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import unicodedata
 
 
 logger = logging.getLogger(__name__)
@@ -74,13 +75,25 @@ def parse_tool_runner_prefix_json(value: str) -> tuple[str, ...]:
         not isinstance(item, str) for item in parsed
     ):
         raise ValueError('tool runner prefix must be a JSON string array')
+    return _validate_prefix(parsed)
+
+
+def _validate_prefix(
+    values: Sequence[str | os.PathLike[str]],
+) -> tuple[str, ...]:
     prefix = _validate_arguments(
-        parsed,
+        values,
         limit=_MAX_PREFIX_ARGUMENTS,
         allow_empty=False,
     )
     if not prefix or not Path(prefix[0]).is_absolute():
         raise ValueError('tool runner executable must be an absolute path')
+    for item in prefix:
+        if item == '--' or any(
+            unicodedata.category(character) == 'Cc'
+            for character in item
+        ):
+            raise ValueError('invalid external tool runner prefix argument')
     return prefix
 
 
@@ -106,13 +119,7 @@ class ToolRunner:
 
     def __post_init__(self) -> None:
         if self.prefix is not None:
-            validated = _validate_arguments(
-                self.prefix,
-                limit=_MAX_PREFIX_ARGUMENTS,
-                allow_empty=False,
-            )
-            if not validated or not Path(validated[0]).is_absolute():
-                raise ValueError('tool runner executable must be an absolute path')
+            validated = _validate_prefix(self.prefix)
             object.__setattr__(self, 'prefix', validated)
 
     def run(
@@ -291,7 +298,7 @@ def pack_avb(
         'avbroot', 'avb', 'pack',
         '--quiet',
         '--output', image.absolute(),
-        '--key', key.key,
+        '--key', key.key.absolute(),
     ]
 
     if key.pass_env is not None:
@@ -299,7 +306,7 @@ def pack_avb(
         cmd.append(key.pass_env)
     elif key.pass_file is not None:
         cmd.append('--pass-file')
-        cmd.append(key.pass_file)
+        cmd.append(key.pass_file.absolute())
 
     if recompute_size:
         cmd.append('--recompute-size')

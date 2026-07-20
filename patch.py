@@ -190,8 +190,7 @@ def parse_args():
     )
     parser.add_argument(
         '--tool-runner-prefix-json',
-        dest='tool_runner_prefix',
-        type=external.parse_tool_runner_prefix_json,
+        dest='_tool_runner_prefix_json',
         metavar='JSON',
         help=(
             'Exact JSON argv prefix for an authenticated external-tool runner; '
@@ -226,6 +225,17 @@ def parse_args():
     )
 
     args = parser.parse_args()
+
+    raw_tool_runner_prefix = args._tool_runner_prefix_json
+    del args._tool_runner_prefix_json
+    try:
+        args.tool_runner_prefix = (
+            external.parse_tool_runner_prefix_json(raw_tool_runner_prefix)
+            if raw_tool_runner_prefix is not None
+            else None
+        )
+    except ValueError:
+        parser.error('--tool-runner-prefix-json is invalid')
 
     if args.output is None:
         args.output = Path(f'{args.input}.patched')
