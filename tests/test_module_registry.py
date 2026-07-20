@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 PixeneOS
 # SPDX-License-Identifier: GPL-3.0-only
 
+import argparse
+from pathlib import Path
 import subprocess
 import sys
 import unittest
@@ -99,6 +101,21 @@ class ModuleRegistryTest(unittest.TestCase):
 
     def test_hyphenated_locked_id_has_a_safe_destination(self) -> None:
         self.assertEqual('module_test_module', module_argument_dest('test-module'))
+
+    def test_legacy_signature_defaults_to_zip_dot_sig(self) -> None:
+        args = argparse.Namespace(
+            module_bcr=Path('BCR-release.zip'),
+            module_bcr_sig=None,
+        )
+        with mock.patch.object(modules, 'verify_ssh_sig') as verify:
+            module = BCRModule.from_args(args)
+
+        self.assertEqual(Path('BCR-release.zip'), module.zip)
+        verify.assert_called_once_with(
+            Path('BCR-release.zip'),
+            Path('BCR-release.zip.sig'),
+            modules.SSH_PUBLIC_KEY_CHENXIAOLONG,
+        )
 
 
 if __name__ == '__main__':
