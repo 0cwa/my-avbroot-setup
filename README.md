@@ -27,6 +27,20 @@ remain the only module-selection mechanism.
 * [AlterInstaller](https://github.com/chenxiaolong/AlterInstaller) (>= version 2.0)
 
 The `avbroot`, `afsr`, and `custota-tool` commands must exist in `PATH`.
+This legacy behavior remains the default. Integrators that authenticate those
+tools through a separate runner can instead pass an exact JSON argv prefix:
+
+```bash
+python3 patch.py \
+    --tool-runner-prefix-json \
+    '["/usr/bin/python3","/opt/pixene/bootstrap.py","--workdir","/var/tmp/pixene","run"]' \
+    # remaining patch arguments ...
+```
+
+For each external tool invocation, the helper appends the allowlisted tool
+name, a `--` separator, and the original arguments. The prefix executable must
+be an absolute path. No shell parsing is performed, and loader/debugging
+environment variables are removed before an authenticated runner starts.
 
 ## Usage
 

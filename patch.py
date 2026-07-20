@@ -188,6 +188,16 @@ def parse_args():
         action='store_true',
         help='Change sepolicy files to allow patching other selinux partitions and don\'t fail if selinux is missing.',
     )
+    parser.add_argument(
+        '--tool-runner-prefix-json',
+        dest='tool_runner_prefix',
+        type=external.parse_tool_runner_prefix_json,
+        metavar='JSON',
+        help=(
+            'Exact JSON argv prefix for an authenticated external-tool runner; '
+            'the default executes legacy bare tool names'
+        ),
+    )
 
     for module_type in modules.all_modules():
         module_type.add_args(parser)
@@ -458,6 +468,14 @@ def _run(
 
 def run(args: argparse.Namespace, temp_dir: Path):
     """Prepare every locked adapter before any OTA verification or mutation."""
+
+    external.configure_tool_runner(
+        getattr(args, 'tool_runner_prefix', None),
+        signing_environment_names=(
+            getattr(args, 'pass_avb_env_var', None),
+            getattr(args, 'pass_ota_env_var', None),
+        ),
+    )
 
     if not _locked_arguments_are_complete(args):
         raise ValueError(
