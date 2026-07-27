@@ -109,7 +109,6 @@ LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = (
             FDROID_REPOSITORY_CERT_SHA256,
             FDROID_OPENPGP_PRIMARY,
             FDROID_OPENPGP_SUBKEY,
-            FDROID_REPOSITORY_CERT_SHA256,
         ),
         digest_required=True,
     ),

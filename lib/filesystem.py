@@ -542,57 +542,63 @@ class ExtFs:
         additions.sort(key=lambda item: (len(item.path.parts), str(item.path)))
         new_metadata: list[ExtEntry] = []
         metadata_by_path = {entry.path: entry for entry in self.info.entries}
-        # Retain parent handles until the entire batch succeeds so an ordinary
-        # write/fsync failure can remove every tree entry it created.
-        created: list[tuple[_ExtInstallPlanEntry, int]] = []
+        # Retain one parent handle per path until the entire batch completes so
+        # an ordinary write/fsync failure can remove every tree entry it made.
+        parent_handles: dict[PurePosixPath, int] = {}
+        created: list[_ExtInstallPlanEntry] = []
+
+        def parent_handle(path: PurePosixPath) -> tuple[int, str]:
+            parent_path = path.parent
+            try:
+                return parent_handles[parent_path], path.name
+            except KeyError:
+                descriptor, name = self._open_install_parent(path)
+                parent_handles[parent_path] = descriptor
+                return descriptor, name
+
         try:
             for item in additions:
                 request = item.request
                 parent = metadata_by_path[item.path.parent]
-                parent_fd, name = self._open_install_parent(item.path)
-                try:
-                    if request.file_type == "Directory":
-                        os.mkdir(name, request.file_mode, dir_fd=parent_fd)
-                        created.append((item, parent_fd))
-                        child_fd = os.open(
-                            name,
-                            self._directory_open_flags(),
-                            dir_fd=parent_fd,
-                        )
-                        try:
-                            os.fchmod(child_fd, request.file_mode)
-                            os.fsync(child_fd)
-                        finally:
-                            os.close(child_fd)
-                    else:
-                        assert request.data is not None
-                        descriptor = os.open(
-                            name,
-                            os.O_WRONLY
-                            | os.O_CREAT
-                            | os.O_EXCL
-                            | getattr(os, "O_CLOEXEC", 0)
-                            | getattr(os, "O_NOFOLLOW", 0),
-                            request.file_mode,
-                            dir_fd=parent_fd,
-                        )
-                        created.append((item, parent_fd))
-                        try:
-                            os.fchmod(descriptor, request.file_mode)
-                            view = memoryview(request.data)
-                            while view:
-                                written = os.write(descriptor, view)
-                                if written == 0:
-                                    raise OSError("short write while installing file")
-                                view = view[written:]
-                            os.fsync(descriptor)
-                        finally:
-                            os.close(descriptor)
-                    os.fsync(parent_fd)
-                except BaseException:
-                    if not created or created[-1][1] != parent_fd:
-                        os.close(parent_fd)
-                    raise
+                parent_fd, name = parent_handle(item.path)
+                if request.file_type == "Directory":
+                    os.mkdir(name, request.file_mode, dir_fd=parent_fd)
+                    created.append(item)
+                    child_fd = os.open(
+                        name,
+                        self._directory_open_flags(),
+                        dir_fd=parent_fd,
+                    )
+                    try:
+                        os.fchmod(child_fd, request.file_mode)
+                        os.fsync(child_fd)
+                    finally:
+                        os.close(child_fd)
+                else:
+                    assert request.data is not None
+                    descriptor = os.open(
+                        name,
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | getattr(os, "O_CLOEXEC", 0)
+                        | getattr(os, "O_NOFOLLOW", 0),
+                        request.file_mode,
+                        dir_fd=parent_fd,
+                    )
+                    created.append(item)
+                    try:
+                        os.fchmod(descriptor, request.file_mode)
+                        view = memoryview(request.data)
+                        while view:
+                            written = os.write(descriptor, view)
+                            if written == 0:
+                                raise OSError("short write while installing file")
+                            view = view[written:]
+                        os.fsync(descriptor)
+                    finally:
+                        os.close(descriptor)
+                os.fsync(parent_fd)
 
                 logger.info(
                     f"Adding {request.file_type} filesystem entry: {item.path}",
@@ -617,7 +623,8 @@ class ExtFs:
                 metadata_by_path[item.path] = entry
         except BaseException as exc:
             rollback_errors: list[OSError] = []
-            for item, parent_fd in reversed(created):
+            for item in reversed(created):
+                parent_fd = parent_handles[item.path.parent]
                 try:
                     if item.request.file_type == "Directory":
                         os.rmdir(item.path.name, dir_fd=parent_fd)
@@ -626,16 +633,14 @@ class ExtFs:
                     os.fsync(parent_fd)
                 except OSError as rollback_exc:
                     rollback_errors.append(rollback_exc)
-                finally:
-                    os.close(parent_fd)
             if rollback_errors:
                 exc.add_note(
                     "filesystem install rollback encountered "
                     f"{len(rollback_errors)} error(s)",
                 )
             raise
-        else:
-            for _, parent_fd in created:
+        finally:
+            for parent_fd in parent_handles.values():
                 os.close(parent_fd)
 
         # A preflight failure cannot reach this mutation point. Publish metadata
@@ -663,8 +668,7 @@ class ExtFs:
 
         logger.info(f"Adding {file_type} filesystem entry: {path}")
 
-        path_str = str(path)
-        label = next(c[1] for c in self.contexts if c[0].fullmatch(path_str))
+        label = self._install_label(path)
 
         # Inherit uid, gid, and timestamps from the parent.
         self.info.entries.append(

@@ -15,7 +15,6 @@ from lib import modules
 from lib.filesystem import CpioFs, ExtFs
 from lib.linux import linux_android_abi, linux_run
 from lib.modules import LegacyCliModule, ModuleRequirements
-from lib.modules.cil_rules import get_cil_rules
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +59,7 @@ class CustotaModule(LegacyCliModule):
         compatible_sepolicy: bool = False,
     ) -> None:
         logger.info(f'Injecting Custota: {self.zip}')
+        sepolicies = list(sepolicies)
 
         system_fs = ext_fs['system']
 
@@ -104,18 +104,9 @@ class CustotaModule(LegacyCliModule):
         # Fall back to patching CIL sources on ROMs that do not ship a
         # precompiled SELinux policy.
         if compatible_sepolicy and not sepolicies:
-            logger.info('No precompiled sepolicy found, patching CIL files directly')
-            cil_rules = get_cil_rules('custota')
-
-            for partition in ['vendor', 'odm']:
-                modules.get_cil_rules_for_partition(
-                    ext_fs,
-                    partition,
-                    cil_rules,
-                    marker='; Added by my-avbroot-setup: custota',
-                )
+            modules.patch_vendor_odm_cil_fallback(ext_fs, 'custota')
 
         # Patch vendor/odm CIL files with ueventd firmware rules for persistence
         # This fixes bootloops caused by LineageOS recompiling policies during Custota updates
         if compatible_sepolicy:
-            modules.patch_vendor_cil_for_ueventd(ext_fs, compatible_sepolicy)
+            modules.patch_vendor_cil_for_ueventd(ext_fs, True)

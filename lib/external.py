@@ -161,6 +161,9 @@ def configure_tool_runner(
 ) -> None:
     """Select legacy execution or a validated authenticated runner prefix."""
     global _tool_runner
+    # Keep bare-tool execution unchanged for compatibility. Environment
+    # sanitization deliberately applies only to the authenticated prefixed
+    # runner and must not be broadened here.
     if prefix is not None:
         for name in signing_environment_names:
             if name is not None and _is_unsafe_environment_name(name):

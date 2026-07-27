@@ -33,8 +33,9 @@ from pydantic import (
 from lib.modules.archive import (
     ArchiveLimits,
     inspect_zip,
-    read_allowlisted_member,
+    read_allowlisted_members,
 )
+from lib.modules.licenses import LICENSE_PATTERN
 from lib.modules.registry import MODULE_ID_PATTERN
 
 
@@ -43,12 +44,6 @@ ARTIFACT_ID_PATTERN = re.compile(r'^[a-z][a-z0-9._-]*$')
 MAX_LOCK_FILE_BYTES = 16 * 1024 * 1024
 ANDROID_PACKAGE_PATTERN = re.compile(
     r'^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$'
-)
-LICENSE_PATTERN = re.compile(
-    r'^(?:LicenseRef-[A-Za-z0-9][A-Za-z0-9.-]*|'
-    r'[A-Za-z0-9][A-Za-z0-9.+-]*)'
-    r'(?:\s+(?:AND|OR)\s+(?:LicenseRef-[A-Za-z0-9][A-Za-z0-9.-]*|'
-    r'[A-Za-z0-9][A-Za-z0-9.+-]*))*$'
 )
 NonBlankString = Annotated[
     str,
@@ -535,7 +530,7 @@ def cache_path(cache_dir: Path, digest: str) -> Path:
 
 
 @contextmanager
-def _open_verified_cached_artifact(
+def open_verified_cached_artifact(
     artifact: ArtifactLock,
     cache_dir: Path,
 ) -> Iterator[BinaryIO]:
@@ -563,7 +558,7 @@ def _open_verified_cached_artifact(
 
 
 def verify_cached_artifact(artifact: ArtifactLock, cache_dir: Path) -> Path:
-    with _open_verified_cached_artifact(artifact, cache_dir):
+    with open_verified_cached_artifact(artifact, cache_dir):
         pass
     return cache_path(cache_dir, artifact.sha256)
 
@@ -794,7 +789,7 @@ def verify_locked_artifacts(
     verified: list[Path] = []
     for artifact in iter_artifacts(lock, module_ids):
         path = cache_path(cache_dir, artifact.sha256)
-        with _open_verified_cached_artifact(artifact, cache_dir) as source:
+        with open_verified_cached_artifact(artifact, cache_dir) as source:
             descriptor = source.fileno()
             verified_path = Path(f'/proc/self/fd/{descriptor}')
             if artifact.archive is not None:
@@ -804,19 +799,26 @@ def verify_locked_artifacts(
                     limits=artifact.archive.limits(),
                 )
                 inspected = {member.name: member for member in inspection.members}
+                apk_members = tuple(
+                    expected.name for expected in artifact.archive.members
+                    if verify_apks and expected.apk is not None
+                )
+                member_data = read_allowlisted_members(
+                    verified_path,
+                    apk_members,
+                    allowlisted_members=artifact.archive.allowlisted_members,
+                    limits=artifact.archive.limits(),
+                )
                 for expected in artifact.archive.members:
-                    actual = inspected[expected.name]
-                    if actual.size != expected.size or actual.sha256 != expected.sha256:
+                    actual = inspected.get(expected.name)
+                    if actual is None or (
+                        actual.size != expected.size or actual.sha256 != expected.sha256
+                    ):
                         raise LockError(
                             f'archive member does not match its lock: {expected.name}'
                         )
                     if verify_apks and expected.apk is not None:
-                        data = read_allowlisted_member(
-                            verified_path,
-                            expected.name,
-                            allowlisted_members=artifact.archive.allowlisted_members,
-                            limits=artifact.archive.limits(),
-                        )
+                        data = member_data[expected.name]
                         # Keep nested APK verification capability-based too: the
                         # verifier sees an anonymous descriptor containing bytes
                         # read from the already verified outer archive inode, not

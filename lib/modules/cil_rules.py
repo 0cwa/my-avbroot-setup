@@ -105,12 +105,21 @@ MSD_CIL_RULES = [
 ]
 
 
+UEVENTD_CIL_RULES = [
+    '; Allow ueventd to access vendor firmware files during boot',
+    '; Fixes bootloop from IPA/firmware loading failures during Custota updates',
+    '(allow ueventd vendor_firmware_file (file (read open getattr)))',
+    '(allow ueventd vendor_firmware_file (dir (read open search)))',
+]
+
+
 MODULE_CIL_RULES = {
     'custota': CUSTOTA_CIL_RULES,
     'msd': MSD_CIL_RULES,
+    'ueventd': UEVENTD_CIL_RULES,
 }
 
 
 def get_cil_rules(module_name: str) -> list[str]:
     """Return the direct-CIL fallback rules for a module."""
-    return MODULE_CIL_RULES.get(module_name, [])
+    return list(MODULE_CIL_RULES.get(module_name, []))

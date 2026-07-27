@@ -87,11 +87,13 @@ class ModuleRegistryTest(unittest.TestCase):
         self.assertEqual(EXPECTED_CONSTRUCTORS, registry)
 
     def test_exact_legacy_cli_order(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
-            [sys.executable, 'patch.py', '--help'],
+            [sys.executable, str(repository_root / 'patch.py'), '--help'],
             check=True,
             capture_output=True,
             text=True,
+            cwd=repository_root,
         )
 
         positions = []

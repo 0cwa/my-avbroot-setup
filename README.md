@@ -9,9 +9,10 @@ Unlike the norm in the Android modding community, I do not use runtime modificat
 This repo includes the script I use for modifying Android OTAs. Folks should probably not use the script as-is and instead, adapt it to their needs.
 
 Supported patch modules and their compatibility metadata are enumerated by the
-[declarative module catalog](./docs/module-catalog.md). Catalog entries do not
-enable modules or execute installer scripts; existing `--module-<name>` options
-remain the only module-selection mechanism.
+[declarative module catalog](./docs/module-catalog.md). Catalog entries remain
+metadata-only: they neither enable modules nor execute installer scripts.
+Modules can be selected explicitly with `--module-<name>` for unlocked
+workflows, or through patch.py's canonical locked profile/lock boundary.
 
 ## Requirements
 
@@ -34,7 +35,7 @@ tools through a separate runner can instead pass an exact JSON argv prefix:
 python3 patch.py \
     --tool-runner-prefix-json \
     '["/usr/bin/python3","/opt/pixene/bootstrap.py","--workdir","/var/tmp/pixene","run"]' \
-    # remaining patch arguments ...
+    --input ota.zip --output ota.patched.zip
 ```
 
 For each external tool invocation, the helper appends the allowlisted tool

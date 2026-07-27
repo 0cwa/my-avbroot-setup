@@ -76,6 +76,7 @@ class FDroidPrivilegedExtensionTest(unittest.TestCase):
         self.source = b'matching GPL corresponding source'
         self.sentinel = self.root / 'installer-executed'
         self.handles: list[BinaryIO] = []
+        self.filesystem_trees = 0
         self.addCleanup(self._close_handles)
 
     def _close_handles(self) -> None:
@@ -226,7 +227,8 @@ class FDroidPrivilegedExtensionTest(unittest.TestCase):
         )
 
     def filesystem(self) -> ExtFs:
-        tree = self.root / f'tree-{len(self.handles)}'
+        tree = self.root / f'tree-{self.filesystem_trees}'
+        self.filesystem_trees += 1
         for path in (
             'system/app',
             'system/priv-app',

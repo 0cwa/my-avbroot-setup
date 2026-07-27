@@ -174,67 +174,14 @@ def patch_vendor_cil_for_ueventd(
         ext_fs: Dictionary of filesystem objects by partition name
         compatible_sepolicy: If True, also patch odm_sepolicy.cil
     """
-    # CIL rules for ueventd to access vendor firmware files
-    # This fixes bootloops caused by firmware loading failures (e.g., ipa_fws.mdt)
-    ueventd_firmware_rules = """
-; Added by my-avbroot-setup --compatible-sepolicy
-; Allow ueventd to access vendor firmware files during boot
-; Fixes bootloop from IPA/firmware loading failures during Custota updates
-(allow ueventd vendor_firmware_file (file (read open getattr)))
-(allow ueventd vendor_firmware_file (dir (read open search)))
-"""
+    from lib.modules.cil_rules import get_cil_rules
 
-    # Patch vendor CIL if it exists
-    if 'vendor' in ext_fs:
-        vendor_cil_path = (
-            ext_fs['vendor'].tree
-            / 'vendor'
-            / 'etc'
-            / 'selinux'
-            / 'vendor_sepolicy.cil'
-        )
+    rules = get_cil_rules('ueventd')
+    marker = '; Added by my-avbroot-setup --compatible-sepolicy'
+    patch_partition_cil_policy(ext_fs, 'vendor', rules, marker)
 
-        if vendor_cil_path.exists():
-            # Check if rules already exist to avoid duplicates
-            existing_content = vendor_cil_path.read_text()
-            if 'my-avbroot-setup --compatible-sepolicy' in existing_content:
-                logger.info(
-                    'Ueventd firmware rules already present in vendor_sepolicy.cil'
-                )
-            else:
-                with open(vendor_cil_path, 'a') as f:
-                    f.write(ueventd_firmware_rules)
-                logger.info(
-                    'Added ueventd firmware access rules to vendor_sepolicy.cil'
-                )
-        else:
-            logger.warning(f'vendor_sepolicy.cil not found at {vendor_cil_path}')
-
-    # Patch ODM CIL if --compatible-sepolicy is enabled and ODM partition exists
-    if compatible_sepolicy and 'odm' in ext_fs:
-        odm_cil_path = (
-            ext_fs['odm'].tree
-            / 'odm'
-            / 'etc'
-            / 'selinux'
-            / 'odm_sepolicy.cil'
-        )
-
-        if odm_cil_path.exists():
-            existing_content = odm_cil_path.read_text()
-            if 'my-avbroot-setup --compatible-sepolicy' in existing_content:
-                logger.info(
-                    'Ueventd firmware rules already present in odm_sepolicy.cil'
-                )
-            else:
-                with open(odm_cil_path, 'a') as f:
-                    f.write(ueventd_firmware_rules)
-                logger.info('Added ueventd firmware access rules to odm_sepolicy.cil')
-        else:
-            logger.info(
-                f'odm_sepolicy.cil not found at {odm_cil_path} '
-                '(may not exist on this ROM)'
-            )
+    if compatible_sepolicy:
+        patch_partition_cil_policy(ext_fs, 'odm', rules, marker)
 
 
 def patch_cil_policy(
@@ -247,7 +194,7 @@ def patch_cil_policy(
         logger.warning(f'CIL file does not exist: {cil_path}')
         return
 
-    if marker in cil_path.read_text():
+    if marker in cil_path.read_text().splitlines():
         logger.info(f'CIL file already patched: {cil_path}')
         return
 
@@ -259,7 +206,7 @@ def patch_cil_policy(
     logger.info(f'Patched CIL file: {cil_path}')
 
 
-def get_cil_rules_for_partition(
+def patch_partition_cil_policy(
     ext_fs: dict[str, ExtFs],
     partition: str,
     cil_rules: list[str],
@@ -285,6 +232,20 @@ def get_cil_rules_for_partition(
 
     patch_cil_policy(cil_path, cil_rules, marker)
     return [str(cil_path)]
+
+
+def patch_vendor_odm_cil_fallback(
+    ext_fs: dict[str, ExtFs],
+    module_name: str,
+) -> None:
+    """Patch direct CIL fallback rules for a module on vendor and ODM."""
+    from lib.modules.cil_rules import get_cil_rules
+
+    logger.info('No precompiled sepolicy found, patching CIL files directly')
+    rules = get_cil_rules(module_name)
+    marker = f'; Added by my-avbroot-setup: {module_name}'
+    for partition in ['vendor', 'odm']:
+        patch_partition_cil_policy(ext_fs, partition, rules, marker)
 
 
 @dataclasses.dataclass
@@ -322,6 +283,23 @@ class LegacyCliModule(Module):
     @abstractmethod
     def from_args(cls, args: argparse.Namespace) -> 'LegacyCliModule':
         ...
+
+
+class SignedZipCliModule(LegacyCliModule):
+    """Legacy module with a signed ZIP argument and a fixed trust root."""
+
+    PUBLIC_KEY = SSH_PUBLIC_KEY_CHENXIAOLONG
+
+    @classmethod
+    def add_args(cls, parser: argparse.ArgumentParser):
+        add_signed_module_args(parser, cls.NAME)
+
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.zip: Path = get_signed_module_args(args, self.NAME, self.PUBLIC_KEY)
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> 'SignedZipCliModule':
+        return cls(args)
 
 
 @functools.cache

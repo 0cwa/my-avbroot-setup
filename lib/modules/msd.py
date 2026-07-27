@@ -16,7 +16,6 @@ from lib.filesystem import CpioFs, ExtFs
 from lib.initscript import InitScript
 from lib.linux import linux_android_abi, linux_run
 from lib.modules import LegacyCliModule, ModuleRequirements
-from lib.modules.cil_rules import get_cil_rules
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +60,7 @@ class MSDModule(LegacyCliModule):
         compatible_sepolicy: bool = False,
     ) -> None:
         logger.info(f'Injecting MSD: {self.zip}')
+        sepolicies = list(sepolicies)
 
         system_fs = ext_fs['system']
 
@@ -111,16 +111,7 @@ class MSDModule(LegacyCliModule):
         # Fall back to patching CIL sources on ROMs that do not ship a
         # precompiled SELinux policy.
         if compatible_sepolicy and not sepolicies:
-            logger.info('No precompiled sepolicy found, patching CIL files directly')
-            cil_rules = get_cil_rules('msd')
-
-            for partition in ['vendor', 'odm']:
-                modules.get_cil_rules_for_partition(
-                    ext_fs,
-                    partition,
-                    cil_rules,
-                    marker='; Added by my-avbroot-setup: msd',
-                )
+            modules.patch_vendor_odm_cil_fallback(ext_fs, 'msd')
 
         InitScript(
             name='msd_daemon',

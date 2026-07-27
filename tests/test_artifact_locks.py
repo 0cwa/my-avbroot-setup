@@ -14,7 +14,10 @@ import zipfile
 
 from pydantic import ValidationError
 
-from lib.modules.archive import read_allowlisted_member as read_archive_member
+from lib.modules.archive import (
+    read_allowlisted_member as read_archive_member,
+    read_allowlisted_members as read_archive_members,
+)
 from lib.modules.locks import (
     ApkIdentity,
     ArchiveMember,
@@ -129,9 +132,9 @@ class ArtifactLockTest(unittest.TestCase):
             'https://example.com/caf\u00e9',
         ):
             with self.subTest(url=url), self.assertRaises(ValidationError):
-                artifact.model_copy(update={'immutable_url': url}).model_validate(
-                    {**artifact.model_dump(), 'immutable_url': url}
-                )
+                ArtifactLock.model_validate({
+                    **artifact.model_dump(), 'immutable_url': url
+                })
         with self.assertRaises(ValidationError):
             ArtifactLock.model_validate({
                 **artifact.model_dump(),
@@ -529,12 +532,12 @@ class ArtifactLockTest(unittest.TestCase):
             cached.write_bytes(archive_data)
             cached.chmod(0o444)
 
-            def replace_cache_then_read(path, *args, **kwargs):
+            def replace_cache_then_read(path, members, *args, **kwargs):
                 replacement = cached.with_suffix('.replacement')
                 replacement.write_bytes(b'attacker-controlled replacement')
                 replacement.chmod(0o444)
                 os.replace(replacement, cached)
-                return read_archive_member(path, *args, **kwargs)
+                return read_archive_members(path, members, *args, **kwargs)
 
             def inspect_nested(path, expected, *, pass_fds):
                 self.assertEqual(expected_identity, expected)
@@ -543,7 +546,7 @@ class ArtifactLockTest(unittest.TestCase):
 
             with (
                 mock.patch(
-                    'lib.modules.locks.read_allowlisted_member',
+                    'lib.modules.locks.read_allowlisted_members',
                     side_effect=replace_cache_then_read,
                 ) as read_member,
                 mock.patch(

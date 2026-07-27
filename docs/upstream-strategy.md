@@ -22,7 +22,7 @@ The authoritative split is in [`upstream-disposition.md`](./upstream-disposition
 
 - The `--compatible-sepolicy` CLI flag and the `Module.inject(..., compatible_sepolicy)` plumbing.
 - ODM partition handling (when `--compatible-sepolicy` is set).
-- The CIL fallback path (`patch_cil_policy`, `get_cil_rules_for_partition`) and `lib/modules/cil_rules.py`.
+- The CIL fallback path (`patch_cil_policy`, `patch_partition_cil_policy`) and `lib/modules/cil_rules.py`.
 - `patch_vendor_cil_for_ueventd` (the IPA / `vendor_firmware_file` bootloop fix).
 - The compatible-mode multi-partition `seapp_contexts` append.
 - The focused module-catalog foundation used by PixeneOS to enumerate and select

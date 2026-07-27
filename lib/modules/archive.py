@@ -175,7 +175,7 @@ def _validate_physical_layout(
     if ordered[0].header_offset != 0:
         raise ArchiveError('archive contains prepended data')
     ranges: list[tuple[int, int, str]] = []
-    for info in ordered:
+    for index, info in enumerate(ordered):
         source.seek(info.header_offset)
         header = source.read(30)
         if len(header) != 30:
@@ -227,9 +227,11 @@ def _validate_physical_layout(
 
         data_start = info.header_offset + 30 + name_length + extra_length
         data_end = data_start + info.compress_size
-        boundary = getattr(info, '_end_offset', None)
-        if boundary is None:
-            boundary = central_directory_offset
+        boundary = (
+            ordered[index + 1].header_offset
+            if index + 1 < len(ordered)
+            else central_directory_offset
+        )
         if data_end > boundary or data_end > central_directory_offset:
             raise ArchiveError(f'archive member data exceeds its physical bounds: {info.filename!r}')
         if uses_descriptor:
@@ -305,8 +307,8 @@ def _inspect_open_archive(
     *,
     allowlist: frozenset[str],
     limits: ArchiveLimits,
-    collect_member: str | None = None,
-) -> tuple[InspectionResult, bytes | None]:
+    collect_members: frozenset[str] = frozenset(),
+) -> tuple[InspectionResult, dict[str, bytes]]:
     infos = archive.infolist()
     _validate_infos(infos, allowlist, limits)
     if len(archive.comment) > limits.max_comment_size:
@@ -316,7 +318,7 @@ def _inspect_open_archive(
     _validate_physical_layout(archive.fp, infos, archive.start_dir, limits)
     streamed = 0
     members: list[InspectedMember] = []
-    collected = None
+    collected: dict[str, bytes] = {}
     for info in infos:
         member_digest = None
         count, data, digest = _stream_member(
@@ -324,13 +326,13 @@ def _inspect_open_archive(
             info,
             limits=limits,
             already_streamed=streamed,
-            collect=not info.is_dir() and info.filename == collect_member,
+            collect=not info.is_dir() and info.filename in collect_members,
         )
         streamed += count
         if not info.is_dir():
             member_digest = digest
         if data is not None:
-            collected = data
+            collected[info.filename] = data
         members.append(InspectedMember(
             name=info.filename,
             size=info.file_size,
@@ -362,6 +364,40 @@ def inspect_zip(
     return result
 
 
+def read_allowlisted_members(
+    path: Path,
+    members: Iterable[str],
+    *,
+    allowlisted_members: Iterable[str],
+    limits: ArchiveLimits = ArchiveLimits(),
+) -> dict[str, bytes]:
+    """Read allowlisted regular files after one complete archive inspection."""
+
+    allowlist = _validated_allowlist(allowlisted_members)
+    requested = _validated_allowlist(members)
+    unallowlisted = requested - allowlist
+    if unallowlisted:
+        raise ArchiveError(
+            f'member is not allowlisted: {sorted(unallowlisted)[0]!r}'
+        )
+    try:
+        with zipfile.ZipFile(path, 'r') as archive:
+            _, data = _inspect_open_archive(
+                archive,
+                allowlist=allowlist,
+                limits=limits,
+                collect_members=requested,
+            )
+    except (zipfile.BadZipFile, EOFError, OSError) as error:
+        raise ArchiveError(f'invalid or truncated ZIP archive: {path}') from error
+    missing = requested - set(data)
+    if missing:
+        raise ArchiveError(
+            f'allowlisted member is not a regular file: {sorted(missing)[0]!r}'
+        )
+    return data
+
+
 def read_allowlisted_member(
     path: Path,
     member: str,
@@ -371,19 +407,9 @@ def read_allowlisted_member(
 ) -> bytes:
     """Read one exact member after validating and CRC-streaming the whole archive."""
 
-    allowlist = _validated_allowlist(allowlisted_members)
-    if member not in allowlist:
-        raise ArchiveError(f'member is not allowlisted: {member!r}')
-    try:
-        with zipfile.ZipFile(path, 'r') as archive:
-            _, data = _inspect_open_archive(
-                archive,
-                allowlist=allowlist,
-                limits=limits,
-                collect_member=member,
-            )
-    except (zipfile.BadZipFile, EOFError, OSError) as error:
-        raise ArchiveError(f'invalid or truncated ZIP archive: {path}') from error
-    if data is None:
-        raise ArchiveError(f'allowlisted member is not a regular file: {member!r}')
-    return data
+    return read_allowlisted_members(
+        path,
+        (member,),
+        allowlisted_members=allowlisted_members,
+        limits=limits,
+    )[member]

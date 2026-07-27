@@ -12,13 +12,13 @@ import tempfile
 from typing import BinaryIO
 
 from lib.modules import Module
-from lib.modules.archive import inspect_zip, read_allowlisted_member
+from lib.modules.archive import inspect_zip, read_allowlisted_members
 from lib.modules.catalog import ModuleCatalog
 from lib.modules.locks import (
     ArtifactLock,
     LockError,
     ModuleLock,
-    _open_verified_cached_artifact,
+    open_verified_cached_artifact,
     load_canonical_lock,
     verify_apk_identity,
 )
@@ -146,19 +146,26 @@ def _verify_open_artifact(
             limits=artifact.archive.limits(),
         )
         inspected = {member.name: member for member in inspection.members}
+        apk_members = tuple(
+            expected.name for expected in artifact.archive.members
+            if verify_apks and expected.apk is not None
+        )
+        member_data = read_allowlisted_members(
+            descriptor_path,
+            apk_members,
+            allowlisted_members=artifact.archive.allowlisted_members,
+            limits=artifact.archive.limits(),
+        )
         for expected in artifact.archive.members:
-            actual = inspected[expected.name]
-            if actual.size != expected.size or actual.sha256 != expected.sha256:
+            actual = inspected.get(expected.name)
+            if actual is None or (
+                actual.size != expected.size or actual.sha256 != expected.sha256
+            ):
                 raise LockError(
                     f'archive member does not match its lock: {expected.name}'
                 )
             if verify_apks and expected.apk is not None:
-                data = read_allowlisted_member(
-                    descriptor_path,
-                    expected.name,
-                    allowlisted_members=artifact.archive.allowlisted_members,
-                    limits=artifact.archive.limits(),
-                )
+                data = member_data[expected.name]
                 with tempfile.TemporaryFile() as nested_apk:
                     nested_apk.write(data)
                     nested_apk.flush()
@@ -216,7 +223,7 @@ def open_verified_selection(
                         f'artifact forbids the selected output scope: {artifact.id}'
                     )
                 source = stack.enter_context(
-                    _open_verified_cached_artifact(artifact, cache_dir)
+                    open_verified_cached_artifact(artifact, cache_dir)
                 )
                 _verify_open_artifact(
                     artifact,

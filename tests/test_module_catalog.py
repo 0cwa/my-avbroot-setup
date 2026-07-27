@@ -713,7 +713,8 @@ loaded = sorted(
 if loaded:
     raise SystemExit(f'Adapter modules imported during listing: {loaded}')
 """
-        subprocess.run([sys.executable, '-c', code], check=True)
+        repository_root = Path(__file__).resolve().parents[1]
+        subprocess.run([sys.executable, '-c', code], check=True, cwd=repository_root)
 
 
 if __name__ == '__main__':

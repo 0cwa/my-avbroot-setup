@@ -32,6 +32,7 @@ from pydantic import (
 )
 import tomlkit
 
+from lib.modules.licenses import LICENSE_PATTERN
 from lib.modules.registry import (
     AdapterRegistration,
     INTERNAL_ADAPTERS,
@@ -41,12 +42,6 @@ from lib.modules.registry import (
 
 
 COMPATIBILITY_TOKEN_PATTERN = re.compile(r'^[a-z][a-z0-9_-]*$')
-LICENSE_PATTERN = re.compile(
-    r'^(?:LicenseRef-[A-Za-z0-9][A-Za-z0-9.-]*|'
-    r'[A-Za-z0-9][A-Za-z0-9.+-]*)'
-    r'(?:\s+(?:AND|OR)\s+(?:LicenseRef-[A-Za-z0-9][A-Za-z0-9.-]*|'
-    r'[A-Za-z0-9][A-Za-z0-9.+-]*))*$'
-)
 MANIFESTS_DIR = Path(__file__).with_name('manifests')
 StrictString = Annotated[str, StringConstraints(strict=True)]
 NonBlankString = Annotated[
@@ -905,9 +900,8 @@ def load_catalog(
             registration = registration_by_id[spec.adapter]
             expectation = spec.verification
             if (
-                expectation.schemes != registration.verification_schemes
-                or expectation.trusted_signer_values
-                != registration.trusted_signers
+                set(expectation.schemes) != set(registration.verification_schemes)
+                or set(expectation.trusted_signer_values) != set(registration.trusted_signers)
                 or expectation.digest_required != registration.digest_required
             ):
                 raise CatalogError(

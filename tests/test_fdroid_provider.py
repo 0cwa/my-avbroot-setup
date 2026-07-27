@@ -202,8 +202,8 @@ class FDroidProviderTest(unittest.TestCase):
             signer_sha256=signer,
         )
 
-    def _provider_patches(self):
-        return (
+    def _provider_patches(self, *, include_apk_identity: bool = True):
+        patches = (
             mock.patch.object(fdroid, 'CLIENT_APK_SIZE', len(self.client)),
             mock.patch.object(fdroid, 'CLIENT_APK_SHA256', sha256(self.client)),
             mock.patch.object(fdroid, 'CLIENT_SOURCE_SIZE', len(self.client_source)),
@@ -217,8 +217,12 @@ class FDroidProviderTest(unittest.TestCase):
             mock.patch.object(fdroid, 'FPE_PERMISSION_SHA256', sha256(self.permission_xml)),
             mock.patch.object(fdroid, '_verify_entry_jar', return_value=self.entry_bytes),
             mock.patch.object(fdroid, '_verify_openpgp'),
-            mock.patch.object(fdroid, '_apk_identity', side_effect=self._identity),
         )
+        if include_apk_identity:
+            patches += (mock.patch.object(
+                fdroid, '_apk_identity', side_effect=self._identity
+            ),)
+        return patches
 
     def _artifact_mapping(self) -> dict[str, bytes]:
         return {
@@ -619,7 +623,7 @@ acknowledgement = 'I accept the F-Droid privileged-extension experimental policy
             previous = b'previous reviewed lock\n'
             output.write_bytes(previous)
             with ExitStack() as stack:
-                for patcher in self._provider_patches()[:-1]:
+                for patcher in self._provider_patches(include_apk_identity=False):
                     stack.enter_context(patcher)
                 stack.enter_context(mock.patch.object(
                     fdroid,

@@ -268,8 +268,7 @@ def _run(
         args.pass_ota_file,
     )
 
-    inject_modules: list[modules.Module] = []
-    locked_module_ids: dict[int, str] = {}
+    inject_modules: list[tuple[str | None, modules.Module]] = []
     need_boot_fs: set[str] = set()
     need_ext_fs: set[str] = set()
     need_sepolicies = False
@@ -280,7 +279,7 @@ def _run(
         except modules.MissingArgs:
             continue
 
-        inject_modules.append(module)
+        inject_modules.append((None, module))
 
         requirements = module.requirements()
         need_boot_fs |= requirements.boot_images
@@ -288,8 +287,7 @@ def _run(
         need_sepolicies |= requirements.selinux_patching
 
     for module_id, module in locked_adapters:
-        inject_modules.append(module)
-        locked_module_ids[id(module)] = module_id
+        inject_modules.append((module_id, module))
 
         requirements = module.requirements()
         need_boot_fs |= requirements.boot_images
@@ -404,14 +402,13 @@ def _run(
 
     # Inject modules.
     locked_results: list[tuple[str, AdapterPatchResult]] = []
-    for module in inject_modules:
+    for module_id, module in inject_modules:
         result = module.inject(
             boot_fs,
             ext_fs,
             selinux_policies,
             compatible_sepolicy=args.compatible_sepolicy,
         )
-        module_id = locked_module_ids.get(id(module))
         if module_id is not None:
             if not isinstance(result, AdapterPatchResult):
                 raise RuntimeError(

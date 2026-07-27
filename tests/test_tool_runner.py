@@ -145,7 +145,10 @@ class ToolRunnerTest(unittest.TestCase):
                 self.assertEqual(expected_cwd, kwargs.get('cwd'))
                 self.assertNotIn('LD_PRELOAD', kwargs['env'])
                 self.assertNotIn('PYTHONPATH', kwargs['env'])
-                call.assert_called_once_with(expected, **kwargs)
+                expected_kwargs = {'env': mock.ANY}
+                if expected_cwd is not None:
+                    expected_kwargs['cwd'] = expected_cwd
+                call.assert_called_once_with(expected, **expected_kwargs)
 
     def test_injection_shaped_argument_is_literal_and_never_a_shell(self) -> None:
         external.configure_tool_runner(PREFIX)
@@ -322,7 +325,10 @@ class ToolRunnerTest(unittest.TestCase):
             self.assertEqual('avb-preserved', kwargs['env']['AVB_PASSWORD'])
             self.assertEqual('ota-preserved', kwargs['env']['OTA_PASSWORD'])
             self.assertNotIn('LD_PRELOAD', kwargs['env'])
-            call.assert_called_once_with(expected, **kwargs)
+            expected_kwargs = {'env': mock.ANY}
+            if expected_cwd is not None:
+                expected_kwargs['cwd'] = expected_cwd
+            call.assert_called_once_with(expected, **expected_kwargs)
 
     def test_unsafe_selected_signing_environment_fails_before_subprocess(
         self,

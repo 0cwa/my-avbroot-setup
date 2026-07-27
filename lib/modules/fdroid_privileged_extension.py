@@ -12,6 +12,11 @@ import zipfile
 
 from lib.filesystem import CpioFs, ExtFs, ExtInstallRequest
 from lib.modules import Module, ModuleRequirements
+from lib.modules.registry import (
+    FDROID_OPENPGP_PRIMARY,
+    FDROID_OPENPGP_SUBKEY,
+    FDROID_REPOSITORY_CERT_SHA256,
+)
 from lib.modules.report import AdapterPatchResult
 from lib.modules.verified import (
     LockedAdapterContext,
@@ -21,9 +26,7 @@ from lib.modules.verified import (
 
 
 MODULE_ID: Final = 'fdroid-privileged-extension'
-FDROID_SIGNER_SHA256: Final = (
-    '43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab'
-)
+FDROID_SIGNER_SHA256: Final = FDROID_REPOSITORY_CERT_SHA256.lower()
 
 CLIENT_ARTIFACT_ID: Final = 'fdroid-client-apk'
 CLIENT_SOURCE_ARTIFACT_ID: Final = 'fdroid-client-source'
@@ -56,10 +59,10 @@ _EXPECTED_PERMISSIONS: Final = frozenset({
     'android.permission.INSTALL_PACKAGES',
 })
 _EXPECTED_TRUSTED_SIGNERS: Final = (
-    ('apk-signer-sha256', FDROID_SIGNER_SHA256.upper()),
-    ('openpgp-primary', '37D2C98789D8311948394E3E41E7044E1DBA2E89'),
-    ('openpgp-subkey', '802A9799016112346E1FEFF47A029E54DD5DCE7A'),
-    ('x509-cert-sha256', FDROID_SIGNER_SHA256.upper()),
+    ('apk-signer-sha256', FDROID_REPOSITORY_CERT_SHA256),
+    ('openpgp-primary', FDROID_OPENPGP_PRIMARY),
+    ('openpgp-subkey', FDROID_OPENPGP_SUBKEY),
+    ('x509-cert-sha256', FDROID_REPOSITORY_CERT_SHA256),
 )
 
 
@@ -376,10 +379,7 @@ class FDroidPrivilegedExtensionModule(Module):
     ) -> AdapterPatchResult:
         del boot_fs, sepolicies, compatible_sepolicy
         if set(ext_fs) != {'system'}:
-            # The patcher can load system implicitly for other adapters, but this
-            # adapter itself must never choose or mutate a second partition.
-            if 'system' not in ext_fs:
-                raise FDroidAdapterError('system filesystem is unavailable')
+            raise FDroidAdapterError('F-Droid adapter requires exactly the system filesystem')
         system = ext_fs['system']
         requests = (
             ExtInstallRequest(
