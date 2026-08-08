@@ -331,6 +331,27 @@ class FDroidPrivilegedExtensionTest(unittest.TestCase):
             self.assertEqual(0o644, entries[path].file_mode)
         self.assertFalse(self.sentinel.exists())
 
+    def test_allows_unrelated_filesystems_and_only_mutates_system(self) -> None:
+        module = FDroidPrivilegedExtensionModule(self.context())
+        system = self.filesystem()
+        vendor = self.filesystem()
+        odm = self.filesystem()
+
+        result = module.inject(
+            {},
+            {'system': system, 'vendor': vendor, 'odm': odm},
+            (),
+        )
+
+        self.assertEqual(INJECTED_PATHS, result.injected_paths)
+        for filesystem in (vendor, odm):
+            self.assertFalse(
+                (filesystem.tree / CLIENT_PATH.removeprefix('/')).exists()
+            )
+            self.assertFalse(
+                (filesystem.tree / FPE_PATH.removeprefix('/')).exists()
+            )
+
     def test_reinstall_is_identical_and_result_is_deterministic(self) -> None:
         module = FDroidPrivilegedExtensionModule(self.context())
         fs = self.filesystem()

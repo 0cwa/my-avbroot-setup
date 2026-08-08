@@ -378,8 +378,8 @@ class FDroidPrivilegedExtensionModule(Module):
         compatible_sepolicy: bool = False,
     ) -> AdapterPatchResult:
         del boot_fs, sepolicies, compatible_sepolicy
-        if set(ext_fs) != {'system'}:
-            raise FDroidAdapterError('F-Droid adapter requires exactly the system filesystem')
+        if 'system' not in ext_fs:
+            raise FDroidAdapterError('F-Droid adapter requires the system filesystem')
         system = ext_fs['system']
         requests = (
             ExtInstallRequest(
