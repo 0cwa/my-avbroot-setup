@@ -45,11 +45,7 @@ environment variables are removed before an authenticated runner starts.
 
 ## Usage
 
-Install the required Python dependencies. This can also be done inside a venv or by installing the packages from your Linux distro's package manager.
-
-```bash
-pip install -r requirements.txt
-```
+Install [uv](https://docs.astral.sh/uv/) or manually set up a Python virtualenv.
 
 The staged module preparation CLI keeps catalog resolution, lock updates,
 artifact acquisition, verification, and archive inspection separate from OTA
@@ -76,7 +72,7 @@ complete command contract and offline/security boundaries.
 Then, run the patch script:
 
 ```bash
-python3 patch.py \
+uv run patch.py \
     --input ota.zip \
     --verify-public-key-avb verify_avb_pkmd.bin \
     --verify-cert-ota verify_ota.crt \
