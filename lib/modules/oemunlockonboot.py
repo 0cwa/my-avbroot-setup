@@ -1,28 +1,22 @@
-# SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
+# SPDX-FileCopyrightText: 2024-2026 Andrew Gunnerson
 # SPDX-License-Identifier: GPL-3.0-only
 
 from collections.abc import Iterable
 import logging
-from pathlib import Path
 from typing import override
 import zipfile
 
 from lib import modules
 from lib.filesystem import CpioFs, ExtFs
 from lib.initscript import InitScript
-from lib.modules import Module, ModuleRequirements
+from lib.modules import ModuleRequirements, SignedZipCliModule
 
 
 logger = logging.getLogger(__name__)
 
 
-class OEMUnlockOnBootModule(Module):
-    def __init__(self, zip: Path, sig: Path) -> None:
-        super().__init__()
-
-        modules.verify_ssh_sig(zip, sig, modules.SSH_PUBLIC_KEY_CHENXIAOLONG)
-
-        self.zip: Path = zip
+class OEMUnlockOnBootModule(SignedZipCliModule):
+    NAME: str = 'oemunlockonboot'
 
     @override
     def requirements(self) -> ModuleRequirements:
