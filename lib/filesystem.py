@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
-from typing import Annotated, BinaryIO, ClassVar, Literal, TextIO
+from typing import Annotated, Any, BinaryIO, ClassVar, Literal, TextIO
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer
 
@@ -128,15 +128,7 @@ class ExtEntry(BaseModel):
 class ExtInfo(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid')
 
-    features: list[str]
-    block_size: int
-    reserved_percentage: int
-    inode_size: int | None = None
-    uuid: str
-    directory_hash_seed: str | None = None
-    volume_name: str | None = None
-    last_mounted_on: str | None = None
-    creation_time: str | None = None
+    metadata: dict[str, Any]
     entries: list[ExtEntry] = []
 
 
