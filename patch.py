@@ -283,8 +283,10 @@ def _patch_output_plans(
     args: argparse.Namespace,
 ) -> tuple[tuple[Path, list[str]], ...]:
     plans = [(args.output, list(args.patch_arg))]
-    if args.secondary_output is not None:
-        plans.append((args.secondary_output, list(args.secondary_patch_arg)))
+    secondary_output = getattr(args, 'secondary_output', None)
+    if secondary_output is not None:
+        secondary_patch_arg = list(getattr(args, 'secondary_patch_arg', ()))
+        plans.append((secondary_output, secondary_patch_arg))
     return tuple(plans)
 
 
