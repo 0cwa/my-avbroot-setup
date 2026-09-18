@@ -10,6 +10,7 @@ import re
 import stat
 from typing import (
     Annotated,
+    Any,
     BinaryIO,
     ClassVar,
     Iterable,
@@ -143,15 +144,9 @@ class ExtEntry(BaseModel):
 class ExtInfo(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
-    features: list[str]
-    block_size: int
-    reserved_percentage: int
-    inode_size: int | None = None
-    uuid: str
-    directory_hash_seed: str | None = None
-    volume_name: str | None = None
-    last_mounted_on: str | None = None
-    creation_time: str | None = None
+    # AFSR 2.0 moved filesystem-level fields under a generic metadata object.
+    # Keep the payload opaque here: PixeneOS only consumes the entry list.
+    metadata: dict[str, Any]
     entries: list[ExtEntry] = []
 
 
