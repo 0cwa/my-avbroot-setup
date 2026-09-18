@@ -20,7 +20,7 @@ workflows, or through patch.py's canonical locked profile/lock boundary.
     * Needed for running a statically-linked Android executable
 * python3
 * [avbroot](https://github.com/chenxiaolong/avbroot) (>= version 3.12.0)
-* [afsr](https://github.com/chenxiaolong/afsr) (>= commit adcae036b68684828edf5eb90be1500abd5cf491)
+* [afsr](https://github.com/chenxiaolong/afsr) (>= version 2.0.0)
 * [Custota](https://github.com/chenxiaolong/Custota) (>= version 5.2)
 * [MSD](https://github.com/chenxiaolong/MSD) (>= version 1.8)
 * [BCR](https://github.com/chenxiaolong/BCR) (>= version 1.65)

@@ -237,10 +237,12 @@ class FDroidPrivilegedExtensionTest(unittest.TestCase):
             (tree / path).mkdir(parents=True, exist_ok=True)
         return ExtFs(
             info=ExtInfo(
-                features=[],
-                block_size=4096,
-                reserved_percentage=0,
-                uuid='00000000-0000-0000-0000-000000000000',
+                metadata={
+                    "features": [],
+                    "block_size": 4096,
+                    "reserved_percentage": 0,
+                    "uuid": "00000000-0000-0000-0000-000000000000",
+                },
                 entries=[
                     directory('/'),
                     directory('/system'),
