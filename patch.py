@@ -179,6 +179,19 @@ def parse_args():
         help='Extra argument to pass to `avbroot ota patch`',
     )
     parser.add_argument(
+        '--secondary-output',
+        type=Path,
+        help=(
+            'Optional second output OTA generated from the same prepared '
+            'replacement images'
+        ),
+    )
+    parser.add_argument(
+        '--secondary-patch-arg',
+        action='append',
+        help='Extra argument for the secondary `avbroot ota patch` invocation',
+    )
+    parser.add_argument(
         '--skip-custota-tool',
         action='store_true',
         help='Skip creating Custota csig file and update JSON file',
@@ -243,12 +256,54 @@ def parse_args():
     if args.patch_arg is None:
         args.patch_arg = ['--rootless']
 
+    if args.secondary_patch_arg is None:
+        args.secondary_patch_arg = []
+
+    if args.secondary_output is not None:
+        if not args.skip_custota_tool:
+            parser.error('--secondary-output requires --skip-custota-tool')
+        if not args.secondary_patch_arg:
+            parser.error(
+                '--secondary-output requires at least one --secondary-patch-arg'
+            )
+        if args.secondary_output == args.output:
+            parser.error('--secondary-output must differ from --output')
+    elif args.secondary_patch_arg:
+        parser.error('--secondary-patch-arg requires --secondary-output')
+
     if not _locked_arguments_are_complete(args):
         parser.error(
             '--module-lock, --module-profile, --module-cache, and '
             '--patch-report must be supplied together'
         )
     return args
+
+
+def _patch_output_plans(
+    args: argparse.Namespace,
+) -> tuple[tuple[Path, list[str]], ...]:
+    plans = [(args.output, list(args.patch_arg))]
+    if args.secondary_output is not None:
+        plans.append((args.secondary_output, list(args.secondary_patch_arg)))
+    return tuple(plans)
+
+
+def _patch_ota_outputs(
+    args: argparse.Namespace,
+    sign_key_avb: external.SigningKey,
+    sign_key_ota: external.SigningKey,
+    replacements: dict[str, Path],
+) -> None:
+    for output, patch_args in _patch_output_plans(args):
+        external.patch_ota(
+            args.input,
+            output,
+            sign_key_avb,
+            sign_key_ota,
+            args.sign_cert_ota,
+            replacements,
+            patch_args,
+        )
 
 
 def _run(
@@ -446,15 +501,18 @@ def _run(
         external.pack_boot(paths.raw_image, paths.unpacked)
         external.pack_avb(paths.image, paths.unpacked, sign_key_avb, False)
 
-    # Patch OTA.
-    external.patch_ota(
-        args.input,
-        args.output,
+    # Patch one or two OTA outputs from the same prepared replacement images.
+    # The secondary output path intentionally reuses all expensive verification,
+    # extraction, module injection, filesystem repacking, and AVB repacking work.
+    replacements = {
+        name: images_dir / f'{name}.img'
+        for name in boot_fs | ext_fs
+    }
+    _patch_ota_outputs(
+        args,
         sign_key_avb,
         sign_key_ota,
-        args.sign_cert_ota,
-        {name: images_dir / f'{name}.img' for name in boot_fs | ext_fs},
-        args.patch_arg,
+        replacements,
     )
 
     if not args.skip_custota_tool:
