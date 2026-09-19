@@ -157,6 +157,13 @@ class MicroGAdapterTest(unittest.TestCase):
             self.assertEqual(MICROG_APK_SIGNER_SHA256, artifact.apk.signer_sha256)
             self.assertEqual(size, artifact.size)
             self.assertEqual(digest, artifact.sha256)
+            self.assertEqual(
+                (
+                    'https://github.com',
+                    'https://release-assets.githubusercontent.com',
+                ),
+                artifact.allowed_origins,
+            )
 
     def test_grapheneos_is_rejected_by_adapter(self) -> None:
         ctx = context('grapheneos')
