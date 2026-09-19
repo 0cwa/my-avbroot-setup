@@ -1,38 +1,29 @@
 # microG locked module
 
-The `microg` adapter injects the official microG Services and Companion APKs
-as privileged product apps. It does not patch Android framework code and does
-not execute installer scripts.
+The `microg` adapter injects official microG Services and Companion APKs as
+privileged product apps. It does not patch Android framework code or execute
+installer scripts.
 
-The reviewed v1 target is LineageOS API 36. Current LineageOS contains
-restricted microG signature spoofing for `com.google.android.gms` and
-`com.android.vending` when the packages are signed by the official microG
-release certificate. GrapheneOS is intentionally incompatible with this module.
+The reviewed target is LineageOS API 36. It relies on LineageOS's restricted
+signature spoofing for official microG-signed `com.google.android.gms` and
+`com.android.vending`. GrapheneOS is intentionally incompatible.
 
-## Updating the lock
+## Reviewed release
 
-Updates are explicit:
+The checked-in lock pins microG `v0.3.15.250932`:
 
-```bash
-python3 module-tool.py lock update microg \
-  --release-tag v0.3.15.250932 \
-  --output locks/microg-v0.3.15.250932.json
-```
+- `com.google.android.gms` versionCode `250932030`
+- `com.android.vending` versionCode `84022630`
 
-The provider accepts only the two custom-ROM APK names from the selected
-official GitHub release, requires GitHub's SHA-256 asset digests, and records
-the official microG APK signer. Normal fetch/verify then rechecks file size,
-SHA-256, package name, versionCode, and the single APK signer.
+Normal locked-artifact fetch/verify checks exact size, SHA-256, package name,
+versionCode, and the single official microG APK signer before the adapter sees
+the files. The adapter also pins the reviewed module release and package
+identities.
 
-The adapter also pins the reviewed release and exact package/version identities,
-so advancing the lock alone cannot silently change privileged-app policy.
-A version update must review the upstream privileged/default-permission changes
-and update the adapter constants/tests.
+Updates intentionally require a code review of the lock, adapter release
+constants, and privileged/default-permission policy. There is no floating or
+microG-specific lock-update command.
 
-v1 installs:
-
-- `com.google.android.gms` (GmsCore)
-- `com.android.vending` (microG Companion)
-
-GsfProxy, F-Droid, Aurora Store, framework patches, Magisk modules, and runtime
-signature-spoofing hooks are deliberately out of scope.
+GsfProxy, F-Droid, Aurora Store, framework patches, Magisk modules, runtime
+signature-spoofing hooks, and opinionated microG preference defaults are out of
+scope.
