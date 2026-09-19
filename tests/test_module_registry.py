@@ -50,7 +50,7 @@ class ModuleRegistryTest(unittest.TestCase):
 
     def test_locked_registry_is_separate_from_legacy_modules(self) -> None:
         self.assertEqual(
-            ['fdroid-privileged-extension'],
+            ['microg', 'fdroid-privileged-extension'],
             [registration.id for registration in LOCKED_ADAPTERS],
         )
         self.assertEqual(
