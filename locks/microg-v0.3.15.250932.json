@@ -5,8 +5,7 @@
         {
           "allowed_origins": [
             "https://github.com",
-            "https://release-assets.githubusercontent.com",
-            "https://objects.githubusercontent.com"
+            "https://release-assets.githubusercontent.com"
           ],
           "apk": {
             "package_name": "com.android.vending",
@@ -25,8 +24,7 @@
         {
           "allowed_origins": [
             "https://github.com",
-            "https://release-assets.githubusercontent.com",
-            "https://objects.githubusercontent.com"
+            "https://release-assets.githubusercontent.com"
           ],
           "apk": {
             "package_name": "com.google.android.gms",
