@@ -79,7 +79,6 @@ def build_parser() -> argparse.ArgumentParser:
     lock_update.add_argument('--version-code', type=_positive_int, action='append')
     lock_update.add_argument('--client-version-code', type=_positive_int)
     lock_update.add_argument('--fpe-ota-version-code', type=_positive_int)
-    lock_update.add_argument('--release-tag')
 
     artifacts = commands.add_parser(
         'artifacts',
@@ -142,23 +141,6 @@ def _update_lock(args: argparse.Namespace) -> None:
             output=args.output,
             client_version_code=args.client_version_code,
             fpe_ota_version_code=args.fpe_ota_version_code,
-        )
-        print(lock.as_json(), end='')
-        return
-    if args.module == 'microg':
-        if (
-            args.version_code
-            or args.client_version_code is not None
-            or args.fpe_ota_version_code is not None
-        ):
-            raise LockError('microG accepts only --release-tag as its selector')
-        if args.output is None:
-            raise LockError('microG lock update requires an explicit --output path')
-        if not args.release_tag:
-            raise LockError('microG lock update requires --release-tag')
-        lock = provider(
-            output=args.output,
-            release_tag=args.release_tag,
         )
         print(lock.as_json(), end='')
         return
