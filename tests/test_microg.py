@@ -84,7 +84,7 @@ def context(rom_family='lineageos'):
         GMSCORE_VERSION_CODE,
         b'gmscore',
     )
-    return LockedAdapterContext(
+    ctx = LockedAdapterContext(
         module_id='microg',
         module_version=RELEASE,
         profile_id='lineage-pdx235',
@@ -103,11 +103,19 @@ def context(rom_family='lineageos'):
         ),
         artifacts=(companion, gmscore),
     )
+    return ctx
+
+
+def close_context(ctx):
+    for item in ctx.artifacts:
+        item._source.close()
 
 
 class MicroGAdapterTest(unittest.TestCase):
     def test_injects_reviewed_product_privapp_layout(self) -> None:
-        module = MicroGModule(context())
+        ctx = context()
+        self.addCleanup(close_context, ctx)
+        module = MicroGModule(ctx)
         product = RecordingProduct()
         report = module.inject({}, {'product': product}, ())
         by_path = {str(request.path): request for request in product.requests}
@@ -118,11 +126,14 @@ class MicroGAdapterTest(unittest.TestCase):
         self.assertEqual({'product'}, module.requirements().ext_images)
 
     def test_grapheneos_is_rejected_by_adapter(self) -> None:
+        ctx = context('grapheneos')
+        self.addCleanup(close_context, ctx)
         with self.assertRaisesRegex(MicroGAdapterError, 'only LineageOS'):
-            MicroGModule(context('grapheneos'))
+            MicroGModule(ctx)
 
     def test_wrong_signer_is_rejected(self) -> None:
         ctx = context()
+        self.addCleanup(close_context, ctx)
         bad = ctx.artifacts[0]
         object.__setattr__(bad, 'apk_signer_sha256', 'ff' * 32)
         with self.assertRaisesRegex(MicroGAdapterError, 'unexpected identity'):
