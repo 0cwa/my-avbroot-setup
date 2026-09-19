@@ -8,9 +8,7 @@ acknowledgement_required = false
 artifact_kinds = ['apk']
 dependencies = []
 conflicts = []
-warnings = [
-    { code = 'physical-validation-required', severity = 'warning', message = 'LineageOS API 36 support remains experimental pending physical-device and OTA-persistence validation.' },
-]
+warnings = []
 reasons = []
 
 [defaults]
