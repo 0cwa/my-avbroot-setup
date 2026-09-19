@@ -99,17 +99,6 @@ def legacy_cli_module_types() -> tuple[type['LegacyCliModule'], ...]:
 # names supplied by a catalog, profile, lock, or command line.
 LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = (
     AdapterRegistration(
-        id='microg',
-        constructor_module='lib.modules.microg',
-        constructor_name='MicroGModule',
-        verification_schemes=(
-            'sha256',
-            'apk-signature',
-        ),
-        trusted_signers=(MICROG_APK_SIGNER_SHA256,),
-        digest_required=True,
-    ),
-    AdapterRegistration(
         id='fdroid-privileged-extension',
         constructor_module='lib.modules.fdroid_privileged_extension',
         constructor_name='FDroidPrivilegedExtensionModule',
@@ -124,6 +113,17 @@ LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = (
             FDROID_OPENPGP_PRIMARY,
             FDROID_OPENPGP_SUBKEY,
         ),
+        digest_required=True,
+    ),
+    AdapterRegistration(
+        id='microg',
+        constructor_module='lib.modules.microg',
+        constructor_name='MicroGModule',
+        verification_schemes=(
+            'sha256',
+            'apk-signature',
+        ),
+        trusted_signers=(MICROG_APK_SIGNER_SHA256,),
         digest_required=True,
     ),
 )
