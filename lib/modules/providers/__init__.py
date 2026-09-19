@@ -11,14 +11,12 @@ from collections.abc import Callable
 
 from lib.modules.locks import ArtifactLockFile
 from lib.modules.providers.fdroid import update_fdroid_lock
-from lib.modules.providers.microg import update_microg_lock
 
 
 LockUpdateProvider = Callable[..., ArtifactLockFile]
 
 LOCK_UPDATE_PROVIDERS: dict[str, LockUpdateProvider] = {
     'fdroid-privileged-extension': update_fdroid_lock,
-    'microg': update_microg_lock,
 }
 
 
@@ -28,4 +26,4 @@ def get_lock_update_provider(module_id: str) -> LockUpdateProvider | None:
     return LOCK_UPDATE_PROVIDERS.get(module_id)
 
 
-__all__ = ('get_lock_update_provider', 'update_fdroid_lock', 'update_microg_lock')
+__all__ = ('get_lock_update_provider', 'update_fdroid_lock')
