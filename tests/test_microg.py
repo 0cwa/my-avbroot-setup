@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from lib.filesystem import ExtInstallResult
+from lib.modules.locks import load_canonical_lock
 from lib.modules.microg import (
     COMPANION_ARTIFACT_ID,
     COMPANION_PATH,
@@ -14,7 +15,6 @@ from lib.modules.microg import (
     GMSCORE_PATH,
     GMSCORE_VERSION_CODE,
     INJECTED_PATHS,
-    MICROG_CONFIG_PATH,
     MicroGAdapterError,
     MicroGModule,
     RELEASE,
@@ -95,7 +95,7 @@ def context(rom_family='lineageos'):
         decision=CompatibilityDecision(
             module='microg',
             rom_status='experimental',
-            reason={'code': 'pdx235-validation-pending', 'message': 'pending'},
+            reason={'code': 'lineage-validation-pending', 'message': 'pending'},
             warnings=(),
         ),
         trusted_signers=(
@@ -122,8 +122,41 @@ class MicroGAdapterTest(unittest.TestCase):
         self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
         self.assertEqual(b'gmscore', by_path[GMSCORE_PATH].data)
         self.assertEqual(b'companion', by_path[COMPANION_PATH].data)
-        self.assertIn(MICROG_CONFIG_PATH, by_path)
         self.assertEqual({'product'}, module.requirements().ext_images)
+
+    def test_checked_in_lock_matches_reviewed_release(self) -> None:
+        lock, _ = load_canonical_lock(
+            Path('locks/microg-v0.3.15.250932.json')
+        )
+        self.assertEqual(('microg',), tuple(module.id for module in lock.modules))
+        module = lock.modules[0]
+        self.assertEqual(RELEASE, module.version)
+        by_id = {artifact.id: artifact for artifact in module.artifacts}
+        self.assertEqual(
+            {'companion-apk', 'gmscore-apk'},
+            set(by_id),
+        )
+        expected = {
+            'companion-apk': (
+                'com.android.vending',
+                COMPANION_VERSION_CODE,
+                4639851,
+                'a973e0235a2829773a4faf36d235d5f703d1c04a2adff674ebaa535a2e78f937',
+            ),
+            'gmscore-apk': (
+                'com.google.android.gms',
+                GMSCORE_VERSION_CODE,
+                105948577,
+                '52597e77fd25fdd347574d0457ed1936a4b9561cf4c8d34e7ac8dd8191dfd4b9',
+            ),
+        }
+        for artifact_id, (package, version, size, digest) in expected.items():
+            artifact = by_id[artifact_id]
+            self.assertEqual(package, artifact.apk.package_name)
+            self.assertEqual(version, artifact.apk.version_code)
+            self.assertEqual(MICROG_APK_SIGNER_SHA256, artifact.apk.signer_sha256)
+            self.assertEqual(size, artifact.size)
+            self.assertEqual(digest, artifact.sha256)
 
     def test_grapheneos_is_rejected_by_adapter(self) -> None:
         ctx = context('grapheneos')
