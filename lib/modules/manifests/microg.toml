@@ -1,0 +1,68 @@
+schema_version = 2
+id = 'microg'
+name = 'microG Services'
+status = 'supported'
+adapter = 'microg'
+lifecycle = 'static-image'
+acknowledgement_required = false
+artifact_kinds = ['apk']
+dependencies = []
+conflicts = []
+warnings = [
+    { code = 'physical-validation-required', severity = 'warning', message = 'Keep LineageOS support experimental until pdx235 passes first-boot and OTA-persistence testing.' },
+]
+reasons = []
+
+[defaults]
+helper_enabled = false
+pixene_profile_enabled = false
+
+[verification]
+schemes = ['sha256', 'apk-signature']
+digest_required = true
+enforced_by = 'adapter'
+
+[[verification.trust_roots]]
+type = 'apk-signer-sha256'
+value = '9bd06727e62796c0130eb6dab39b73157451582cbd138e86c468acc395d14165'
+
+[compatibility]
+root_modes = ['rootless', 'rooted']
+architectures = ['any']
+
+[compatibility.roms.lineageos]
+status = 'experimental'
+reason = { code = 'pdx235-validation-pending', message = 'LineageOS has restricted microG signature spoofing, but pdx235 device acceptance is still pending.' }
+
+[compatibility.roms.grapheneos]
+status = 'incompatible'
+reason = { code = 'graphene-signature-model', message = 'GrapheneOS does not expose the restricted microG signature-spoofing contract used by this module.' }
+
+[capabilities.requires]
+selective_signature_spoofing = true
+product_priv_app = true
+custom_init_selinux = false
+abis = ['any']
+min_api = 36
+max_api = 36
+
+[capabilities.provides]
+root = []
+zygisk = []
+selective_signature_spoofing = false
+product_priv_app = false
+custom_init_selinux = false
+
+[legal]
+license = 'Apache-2.0'
+source_url = 'https://github.com/microg/GmsCore'
+source_offer_required = false
+upstream_only_fetching = true
+local_only = false
+cache_policy = 'read-write'
+allowed_output_scopes = ['local-unpublished', 'private', 'shared', 'published']
+
+[legal.permission_record]
+reference = 'Apache-2.0 Sections 2 and 4 redistribution grant'
+source_url = 'https://github.com/microg/GmsCore/blob/v0.3.15.250932/LICENSE'
+granted_scopes = ['shared', 'published']
