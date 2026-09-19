@@ -32,7 +32,6 @@ GMSCORE_DEFAULT_PERMISSIONS_PATH: Final = (
 GMSCORE_SYSCONFIG_PATH: Final = (
     '/product/etc/sysconfig/sysconfig-com.google.android.gms.xml'
 )
-MICROG_CONFIG_PATH: Final = '/product/etc/microg.xml'
 COMPANION_PRIVAPP_PATH: Final = (
     '/product/etc/permissions/privapp-permissions-com.android.vending.xml'
 )
@@ -46,7 +45,6 @@ INJECTED_PATHS: Final = tuple(sorted((
     GMSCORE_PRIVAPP_PATH,
     GMSCORE_DEFAULT_PERMISSIONS_PATH,
     GMSCORE_SYSCONFIG_PATH,
-    MICROG_CONFIG_PATH,
     COMPANION_PRIVAPP_PATH,
     COMPANION_DEFAULT_PERMISSIONS_PATH,
 )))
@@ -54,13 +52,6 @@ INJECTED_PATHS: Final = tuple(sorted((
 _EXPECTED_SIGNERS: Final = (
     ('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),
 )
-_ALLOWED_SCOPES: Final = (
-    'local-unpublished',
-    'private',
-    'shared',
-    'published',
-)
-
 GMSCORE_PRIVAPP_XML: Final = b'''<?xml version="1.0" encoding="utf-8"?>
 <permissions>
     <privapp-permissions package="com.google.android.gms">
@@ -111,35 +102,6 @@ GMSCORE_SYSCONFIG_XML: Final = b'''<?xml version="1.0" encoding="utf-8"?>
     <allow-in-data-usage-save package="com.google.android.gms"/>
     <allow-unthrottled-location package="com.google.android.gms"/>
 </config>
-'''
-
-MICROG_CONFIG_XML: Final = b'''<?xml version="1.0" encoding="utf-8" standalone="yes"?>
-<map>
-    <boolean name="checkin_enable_service" value="false"/>
-    <boolean name="gcm_enable_mcs_service" value="false"/>
-    <boolean name="auth_manager_trust_google" value="true"/>
-    <boolean name="auth_manager_visible" value="true"/>
-    <boolean name="safetynet_enabled" value="false"/>
-    <boolean name="droidguard_enabled" value="false"/>
-    <boolean name="location_wifi_mls" value="true"/>
-    <boolean name="location_wifi_moving" value="true"/>
-    <boolean name="location_wifi_learning" value="true"/>
-    <boolean name="location_cell_mls" value="true"/>
-    <boolean name="location_cell_learning" value="true"/>
-    <boolean name="location_geocoder_nominatim" value="true"/>
-    <boolean name="exposure_scanner_enabled" value="false"/>
-    <boolean name="wifi_mls" value="true"/>
-    <boolean name="cell_mls" value="true"/>
-    <boolean name="wifi_learning" value="true"/>
-    <boolean name="cell_learning" value="true"/>
-    <boolean name="wifi_moving" value="true"/>
-    <boolean name="nominatim_enabled" value="true"/>
-    <boolean name="vending_licensing" value="true"/>
-    <boolean name="vending_licensing_purchase_free_apps" value="true"/>
-    <boolean name="vending_billing" value="true"/>
-    <boolean name="vending_asset_delivery" value="true"/>
-    <boolean name="vending_device_sync" value="true"/>
-</map>
 '''
 
 COMPANION_PRIVAPP_XML: Final = b'''<?xml version="1.0" encoding="utf-8"?>
@@ -196,10 +158,6 @@ def _require_apk(
         or artifact.apk_version_code != version_code
         or artifact.apk_signer_sha256 != MICROG_APK_SIGNER_SHA256
         or artifact.archive_members
-        or artifact.license != 'Apache-2.0'
-        or artifact.source_offer_required
-        or artifact.corresponding_source_artifact is not None
-        or artifact.allowed_output_scopes != _ALLOWED_SCOPES
     ):
         raise MicroGAdapterError(
             f'locked microG artifact has an unexpected identity or policy: '
@@ -300,14 +258,6 @@ class MicroGModule(Module):
                 0,
                 0,
                 GMSCORE_SYSCONFIG_XML,
-            ),
-            ExtInstallRequest(
-                MICROG_CONFIG_PATH,
-                'RegularFile',
-                0o644,
-                0,
-                0,
-                MICROG_CONFIG_XML,
             ),
             ExtInstallRequest(
                 COMPANION_PRIVAPP_PATH,
