@@ -1,0 +1,83 @@
+{
+  "modules": [
+    {
+      "artifacts": [
+        {
+          "allowed_origins": [
+            "https://github.com",
+            "https://release-assets.githubusercontent.com",
+            "https://objects.githubusercontent.com"
+          ],
+          "apk": {
+            "package_name": "com.android.vending",
+            "signer_sha256": "9bd06727e62796c0130eb6dab39b73157451582cbd138e86c468acc395d14165",
+            "version_code": 84022630
+          },
+          "archive": null,
+          "id": "companion-apk",
+          "immutable_url": "https://github.com/microg/GmsCore/releases/download/v0.3.15.250932/com.android.vending-84022630.apk",
+          "kind": "apk",
+          "legal": {
+            "allowed_output_scopes": [
+              "local-unpublished",
+              "private",
+              "shared",
+              "published"
+            ],
+            "license": "Apache-2.0",
+            "source_offer_required": false
+          },
+          "role": "injection-input",
+          "sha256": "a973e0235a2829773a4faf36d235d5f703d1c04a2adff674ebaa535a2e78f937",
+          "size": 4639851,
+          "source": {
+            "corresponding_source_artifact": null,
+            "revision": "v0.3.15.250932",
+            "url": "https://github.com/microg/GmsCore"
+          },
+          "source_verification": null,
+          "version": "84022630"
+        },
+        {
+          "allowed_origins": [
+            "https://github.com",
+            "https://release-assets.githubusercontent.com",
+            "https://objects.githubusercontent.com"
+          ],
+          "apk": {
+            "package_name": "com.google.android.gms",
+            "signer_sha256": "9bd06727e62796c0130eb6dab39b73157451582cbd138e86c468acc395d14165",
+            "version_code": 250932030
+          },
+          "archive": null,
+          "id": "gmscore-apk",
+          "immutable_url": "https://github.com/microg/GmsCore/releases/download/v0.3.15.250932/com.google.android.gms-250932030.apk",
+          "kind": "apk",
+          "legal": {
+            "allowed_output_scopes": [
+              "local-unpublished",
+              "private",
+              "shared",
+              "published"
+            ],
+            "license": "Apache-2.0",
+            "source_offer_required": false
+          },
+          "role": "injection-input",
+          "sha256": "52597e77fd25fdd347574d0457ed1936a4b9561cf4c8d34e7ac8dd8191dfd4b9",
+          "size": 105948577,
+          "source": {
+            "corresponding_source_artifact": null,
+            "revision": "v0.3.15.250932",
+            "url": "https://github.com/microg/GmsCore"
+          },
+          "source_verification": null,
+          "version": "250932030"
+        }
+      ],
+      "id": "microg",
+      "version": "v0.3.15.250932"
+    }
+  ],
+  "schema_version": 1
+}
