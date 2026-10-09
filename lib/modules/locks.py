@@ -754,13 +754,49 @@ def verify_apk_identity(
         ['apksigner', 'verify', '--verbose', '--print-certs', str(path)],
         pass_fds=pass_fds,
     )
-    signer_matches = re.findall(
-        r'^Signer #\d+ certificate SHA-256 digest: ([0-9A-Fa-f:]+)$',
+    # Build Tools <= 36 prints "Signer #1 certificate ..."; Build Tools 37
+    # prefixes certificate details with their signing scheme instead ("V2
+    # Signer:", "V3.0 Signer:", etc.). Keep the lock's single-signer policy
+    # across both formats. The same certificate may be listed once per scheme.
+    legacy_signers = re.findall(
+        r'^Signer #(\d+) certificate SHA-256 digest: ([0-9A-Fa-f:]+)\s*$',
         signature_output,
         flags=re.MULTILINE,
     )
-    signers = tuple(value.replace(':', '').lower() for value in signer_matches)
-    if signers != (expected.signer_sha256,):
+    scheme_signers = re.findall(
+        r'^V[1-4](?:\.\d+)? Signer:(?: \([^\n)]*\))? '
+        r'certificate SHA-256 digest: ([0-9A-Fa-f:]+)\s*$',
+        signature_output,
+        flags=re.MULTILINE,
+    )
+    reported_counts = re.findall(
+        r'^Number of signers: (\d+)\s*$',
+        signature_output,
+        flags=re.MULTILINE,
+    )
+    expected_signer = expected.signer_sha256
+    if legacy_signers:
+        # An APK with multiple signers is not acceptable, even when both use
+        # the same certificate. Never combine old and new output formats.
+        valid_signers = (
+            not scheme_signers
+            and len(legacy_signers) == 1
+            and legacy_signers[0][0] == '1'
+            and legacy_signers[0][1].replace(':', '').lower() == expected_signer
+            and (not reported_counts or reported_counts == ['1'])
+        )
+    else:
+        # Require apksigner's verbose signer count with scheme-prefixed
+        # output so repeated lines for V2/V3 cannot conceal multi-signing.
+        valid_signers = (
+            bool(scheme_signers)
+            and reported_counts == ['1']
+            and all(
+                signer.replace(':', '').lower() == expected_signer
+                for signer in scheme_signers
+            )
+        )
+    if not valid_signers:
         raise LockError('APK signer does not match the single locked signer')
 
     package_name = _run_identity_command(
