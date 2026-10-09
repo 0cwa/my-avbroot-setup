@@ -648,5 +648,64 @@ class ArtifactLockTest(unittest.TestCase):
             verify_apk_identity(Path('app.apk'), expected)
 
 
+    def test_apk_identity_accepts_android_build_tools_37_labels(self) -> None:
+        signer = 'ab' * 32
+        expected = ApkIdentity(
+            package_name='org.example.app',
+            version_code=7,
+            signer_sha256=signer,
+        )
+        # v2 and v3 signing schemes can repeat the same trusted signer.
+        for certificate_lines in (
+            f'V2 Signer: certificate SHA-256 digest: {signer}\n',
+            f'V3.0 Signer: certificate SHA-256 digest: {signer}\n',
+            (
+                f'V2 Signer: certificate SHA-256 digest: {signer}\n'
+                'V3.0 Signer: (minSdkVersion=28, maxSdkVersion=35) '
+                f'certificate SHA-256 digest: {signer}\n'
+            ),
+        ):
+            with self.subTest(certificate_lines=certificate_lines), mock.patch(
+                'lib.modules.locks._run_identity_command',
+                side_effect=[
+                    f'Verifies\nNumber of signers: 1\n{certificate_lines}',
+                    'org.example.app\n',
+                    '7\n',
+                ],
+            ):
+                verify_apk_identity(Path('app.apk'), expected)
+
+    def test_apk_identity_rejects_untrusted_or_multiple_scheme_signers(self) -> None:
+        signer = 'ab' * 32
+        stranger = 'cd' * 32
+        expected = ApkIdentity(
+            package_name='org.example.app',
+            version_code=7,
+            signer_sha256=signer,
+        )
+        bad_outputs = (
+            f'Number of signers: 1\nV2 Signer: certificate SHA-256 digest: {stranger}\n',
+            (
+                f'Number of signers: 1\n'
+                f'V2 Signer: certificate SHA-256 digest: {signer}\n'
+                f'V3.0 Signer: certificate SHA-256 digest: {stranger}\n'
+            ),
+            f'Number of signers: 2\nV2 Signer: certificate SHA-256 digest: {signer}\n',
+            f'V2 Signer: certificate SHA-256 digest: {signer}\n',
+            f'Number of signers: 1\nSource Stamp Signer: certificate SHA-256 digest: {signer}\n',
+            (
+                f'Number of signers: 1\n'
+                f'Signer #1 certificate SHA-256 digest: {signer}\n'
+                f'V2 Signer: certificate SHA-256 digest: {signer}\n'
+            ),
+        )
+        for output in bad_outputs:
+            with self.subTest(output=output), mock.patch(
+                'lib.modules.locks._run_identity_command',
+                return_value=output,
+            ), self.assertRaisesRegex(LockError, 'single locked signer'):
+                verify_apk_identity(Path('app.apk'), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
