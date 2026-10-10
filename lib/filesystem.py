@@ -533,8 +533,12 @@ class ExtFs:
         """Preflight and install a complete batch of directories and files."""
 
         request_list = list(requests)
-        plan = self._preflight_install(
-            request_list, label_mountpoint=label_mountpoint
+        plan = (
+            self._preflight_install(request_list)
+            if not label_mountpoint
+            else self._preflight_install(
+                request_list, label_mountpoint=label_mountpoint
+            )
         )
         additions = [item for item in plan if item.status == "created"]
 
