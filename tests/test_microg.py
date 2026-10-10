@@ -196,11 +196,11 @@ class MicroGAdapterTest(unittest.TestCase):
                 for entry in fs.info.entries
             }
             self.assertEqual(
-                'u:object_r:privapp_data_file:s0\\0',
+                'u:object_r:privapp_data_file:s0\0',
                 labels['/priv-app/GmsCore/GmsCore.apk'],
             )
             self.assertEqual(
-                'u:object_r:system_file:s0\\0',
+                'u:object_r:system_file:s0\0',
                 labels['/etc/permissions/privapp-permissions-com.google.android.gms.xml'],
             )
             self.assertNotIn(PurePosixPath('/product'), {
