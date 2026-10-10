@@ -7,7 +7,9 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
+import sys
 import unicodedata
 
 
@@ -150,6 +152,36 @@ class ToolRunner:
             kwargs['env'] = _sanitized_environment()
         subprocess.check_call(command, **kwargs)
 
+    def capture(
+        self,
+        tool: str,
+        arguments: Sequence[str | os.PathLike[str]],
+    ) -> subprocess.CompletedProcess[str]:
+        """Capture an authenticated verifier's result without any shell."""
+        if tool not in _ALLOWED_TOOLS:
+            raise ValueError(f'unsupported external tool: {tool!r}')
+        checked = _validate_arguments(
+            arguments, limit=_MAX_TOOL_ARGUMENTS, allow_empty=True,
+        )
+        command = (
+            [tool, *checked]
+            if self.prefix is None
+            else [*self.prefix, tool, '--', *checked]
+        )
+        if sum(len(item) + 1 for item in command) > _MAX_COMMAND_LENGTH:
+            raise ValueError('external tool command is too long')
+        kwargs: dict[str, object] = {}
+        if self.prefix is not None:
+            kwargs['env'] = _sanitized_environment()
+        return subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+            **kwargs,
+        )
+
 
 _tool_runner = ToolRunner()
 
@@ -200,7 +232,51 @@ class SigningKey:
     pass_file: Path | None
 
 
-def verify_ota(ota: Path, public_key_avb: Path | None, cert_ota: Path | None):
+def _only_care_map_verification_error(output: str) -> bool:
+    """Only tolerate the single *source* care-map discrepancy.
+
+    avbroot 3.34.1 added a strict equality check even though Android's
+    releasetools may use sparse ranges and build.prop fingerprints instead
+    of the AVB property's contiguous ranges and fingerprints. All other
+    original OTA verification checks must have completed successfully.
+    """
+    if len(output) > 262144 or '\x00' in output:
+        return False
+    output = re.sub(r'\x1b\[[0-9;]*m', '', output)
+    errors = re.findall(
+        r'^\s*[0-9]+(?:\.[0-9]+)?s\s+ERROR\s+(.+)$',
+        output,
+        flags=re.MULTILINE,
+    )
+    if errors != [
+        'Care map does not match:',
+        'Encountered 1 error(s) during verification',
+    ]:
+        return False
+    return all(fragment in output for fragment in (
+        'INFO Verifying whole-file signature',
+        'INFO Verifying payload',
+        'INFO Verifying partition hashes',
+        'INFO Verifying AVB signatures',
+        "INFO Checking recovery ramdisk's otacerts.zip",
+        'INFO Verifying care map',
+        'Actual: CareMap {',
+        'Expected: CareMap {',
+    ))
+
+
+def verify_ota(
+    ota: Path,
+    public_key_avb: Path | None,
+    cert_ota: Path | None,
+    *,
+    allow_source_care_map_mismatch: bool = False,
+) -> bool:
+    """Verify OTA; return True only for a fully checked care-map-only mismatch.
+
+    This is never used on an output OTA. avbroot's cryptographic, partition,
+    AVB, and recovery-certificate checks must all pass on the signed source.
+    """
     logger.info(f'Verifying OTA: {ota}')
 
     cmd = [
@@ -216,7 +292,35 @@ def verify_ota(ota: Path, public_key_avb: Path | None, cert_ota: Path | None):
         cmd.append('--cert-ota')
         cmd.append(cert_ota)
 
-    _run_command(cmd)
+    if not allow_source_care_map_mismatch:
+        _run_command(cmd)
+        return False
+
+    # Never use the compatibility path without both independent trust anchors.
+    if not public_key_avb or not cert_ota:
+        raise ValueError(
+            'source care-map compatibility requires AVB key and OTA certificate'
+        )
+
+    result = _tool_runner.capture(cmd[0], cmd[1:])
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+        sys.stdout.flush()
+
+    if result.returncode == 0:
+        return False
+    if (
+        result.returncode != 1
+        or not _only_care_map_verification_error(result.stdout or '')
+    ):
+        raise subprocess.CalledProcessError(result.returncode, result.args)
+
+    logger.warning(
+        'Original signed OTA has a care-map-only discrepancy. All other '
+        'avbroot verification checks passed. The generated OTA must '
+        'reconstruct its care map and pass strict verification before use.'
+    )
+    return True
 
 
 def unpack_ota(ota: Path, output_dir: Path, partitions: Iterable[str]):
