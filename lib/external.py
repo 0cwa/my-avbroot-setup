@@ -323,6 +323,28 @@ def verify_ota(
     return True
 
 
+
+def encode_output_avb_public_key(key: SigningKey, output: Path) -> None:
+    """Derive the expected output AVB identity from the configured signing key.
+
+    The output verifier must not trust the AVB public key embedded in the
+    newly signed OTA as the sole source of its expected signing identity.
+    """
+    cmd = [
+        'avbroot', 'key', 'encode-avb',
+        '--key', key.key,
+        '--output', output,
+    ]
+    if key.pass_env is not None:
+        cmd.extend(('--pass-env-var', key.pass_env))
+    elif key.pass_file is not None:
+        cmd.extend(('--pass-file', key.pass_file))
+
+    _run_command(cmd)
+    if not output.is_file() or output.stat().st_size == 0:
+        raise RuntimeError('failed to derive nonempty output AVB public key')
+
+
 def unpack_ota(ota: Path, output_dir: Path, partitions: Iterable[str]):
     logger.info(f'Unpacking OTA: {ota}')
 
