@@ -436,8 +436,9 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             patch_report=report_path,
         )
 
-        def verify_ota(*unused) -> None:
+        def verify_ota(*unused, **options) -> bool:
             events.append('verify-ota')
+            return False
 
         real_build_patch_report = patch_script.build_patch_report
 
