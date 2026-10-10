@@ -131,6 +131,15 @@ def parse_args():
         help='OTA certificate for verifying input OTA',
     )
     parser.add_argument(
+        '--allow-source-care-map-mismatch',
+        action='store_true',
+        help=(
+            'For a known signed upstream OTA, tolerate ONLY avbroot 3.34.1 '
+            'source care-map drift after all other checks pass; strictly '
+            'verify each rebuilt OTA before generating publication assets'
+        ),
+    )
+    parser.add_argument(
         '--sign-key-avb',
         type=Path,
         required=True,
@@ -250,6 +259,14 @@ def parse_args():
     except ValueError:
         parser.error('--tool-runner-prefix-json is invalid')
 
+    if args.allow_source_care_map_mismatch and (
+        args.verify_public_key_avb is None or args.verify_cert_ota is None
+    ):
+        parser.error(
+            '--allow-source-care-map-mismatch requires both '
+            '--verify-public-key-avb and --verify-cert-ota'
+        )
+
     if args.output is None:
         args.output = Path(f'{args.input}.patched')
 
@@ -364,8 +381,19 @@ def _run(
         if args.compatible_sepolicy:
             need_ext_fs.add('odm')
 
-    # Verify OTA.
-    external.verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
+    # Always authenticate the original signed OTA before extraction.
+    # Some official LineageOS OTAs have AOSP sparse ranges and OEM build.prop
+    # fingerprints, while avbroot 3.34.1 derives the care map from AVB props.
+    # A precise, single care-map-only mismatch may be accepted only when the
+    # caller explicitly opts in and all other source checks pass.
+    source_care_map_mismatch = external.verify_ota(
+        args.input,
+        args.verify_public_key_avb,
+        args.verify_cert_ota,
+        allow_source_care_map_mismatch=getattr(
+            args, 'allow_source_care_map_mismatch', False
+        ),
+    )
 
     # Unpack OTA.
     images_dir = temp_dir / 'images'
@@ -516,6 +544,19 @@ def _run(
         sign_key_ota,
         replacements,
     )
+
+    if source_care_map_mismatch:
+        # No output gets a care-map exception. The signed replacement OTAs
+        # must each contain a freshly generated care map that passes normal
+        # avbroot verification, including all partition and signature checks.
+        for output, _ in _patch_output_plans(args):
+            with zipfile.ZipFile(output) as archive:
+                if 'care_map.pb' not in archive.namelist():
+                    raise RuntimeError(
+                        'patched OTA has no rebuilt care_map.pb: '
+                        f'{output}'
+                    )
+            external.verify_ota(output, None, args.sign_cert_ota)
 
     if not args.skip_custota_tool:
         # Generate Custota csig.
