@@ -52,6 +52,15 @@ INJECTED_PATHS: Final = tuple(sorted((
 _EXPECTED_SIGNERS: Final = (
     ('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),
 )
+
+
+def _product_image_path(mounted_path: str) -> str:
+    """Map the runtime /product mount into product.img's filesystem root."""
+    if not mounted_path.startswith('/product/'):
+        raise MicroGAdapterError('invalid mounted product path')
+    # AFSR unpacking exposes product.img contents at /, not /product.
+    return mounted_path[len('/product'):]
+
 GMSCORE_PRIVAPP_XML: Final = b'''<?xml version="1.0" encoding="utf-8"?>
 <permissions>
     <privapp-permissions package="com.google.android.gms">
@@ -224,19 +233,19 @@ class MicroGModule(Module):
         product = ext_fs['product']
         requests = (
             ExtInstallRequest(
-                '/product/priv-app/GmsCore', 'Directory', 0o755, 0, 0
+                _product_image_path('/product/priv-app/GmsCore'), 'Directory', 0o755, 0, 0
             ),
             ExtInstallRequest(
-                GMSCORE_PATH, 'RegularFile', 0o644, 0, 0, self._gmscore_apk
+                _product_image_path(GMSCORE_PATH), 'RegularFile', 0o644, 0, 0, self._gmscore_apk
             ),
             ExtInstallRequest(
-                '/product/priv-app/FakeStore', 'Directory', 0o755, 0, 0
+                _product_image_path('/product/priv-app/FakeStore'), 'Directory', 0o755, 0, 0
             ),
             ExtInstallRequest(
-                COMPANION_PATH, 'RegularFile', 0o644, 0, 0, self._companion_apk
+                _product_image_path(COMPANION_PATH), 'RegularFile', 0o644, 0, 0, self._companion_apk
             ),
             ExtInstallRequest(
-                GMSCORE_PRIVAPP_PATH,
+                _product_image_path(GMSCORE_PRIVAPP_PATH),
                 'RegularFile',
                 0o644,
                 0,
@@ -244,7 +253,7 @@ class MicroGModule(Module):
                 GMSCORE_PRIVAPP_XML,
             ),
             ExtInstallRequest(
-                GMSCORE_DEFAULT_PERMISSIONS_PATH,
+                _product_image_path(GMSCORE_DEFAULT_PERMISSIONS_PATH),
                 'RegularFile',
                 0o644,
                 0,
@@ -252,7 +261,7 @@ class MicroGModule(Module):
                 GMSCORE_DEFAULT_PERMISSIONS_XML,
             ),
             ExtInstallRequest(
-                GMSCORE_SYSCONFIG_PATH,
+                _product_image_path(GMSCORE_SYSCONFIG_PATH),
                 'RegularFile',
                 0o644,
                 0,
@@ -260,7 +269,7 @@ class MicroGModule(Module):
                 GMSCORE_SYSCONFIG_XML,
             ),
             ExtInstallRequest(
-                COMPANION_PRIVAPP_PATH,
+                _product_image_path(COMPANION_PRIVAPP_PATH),
                 'RegularFile',
                 0o644,
                 0,
@@ -268,7 +277,7 @@ class MicroGModule(Module):
                 COMPANION_PRIVAPP_XML,
             ),
             ExtInstallRequest(
-                COMPANION_DEFAULT_PERMISSIONS_PATH,
+                _product_image_path(COMPANION_DEFAULT_PERMISSIONS_PATH),
                 'RegularFile',
                 0o644,
                 0,
@@ -277,10 +286,12 @@ class MicroGModule(Module):
             ),
         )
         results = product.install(requests)
+        # Keep patch-report paths in their mounted Android namespace, while
+        # all ExtFs writes and metadata paths use product.img-relative paths.
         status_by_path = {
-            str(result.path): result.status
+            '/product' + str(result.path): result.status
             for result in results
-            if str(result.path) in INJECTED_PATHS
+            if '/product' + str(result.path) in INJECTED_PATHS
         }
         if set(status_by_path) != set(INJECTED_PATHS):
             raise MicroGAdapterError(
