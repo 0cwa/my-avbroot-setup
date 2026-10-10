@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: 2026 PixeneOS
 # SPDX-License-Identifier: GPL-3.0-only
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import tempfile
 import unittest
 
-from lib.filesystem import ExtInstallResult
+from lib.filesystem import ExtEntry, ExtFs, ExtInfo, ExtInstallResult
 from lib.modules.locks import load_canonical_lock
 from lib.modules.microg import (
     COMPANION_ARTIFACT_ID,
@@ -120,9 +121,68 @@ class MicroGAdapterTest(unittest.TestCase):
         report = module.inject({}, {'product': product}, ())
         by_path = {str(request.path): request for request in product.requests}
         self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
-        self.assertEqual(b'gmscore', by_path[GMSCORE_PATH].data)
-        self.assertEqual(b'companion', by_path[COMPANION_PATH].data)
+        self.assertEqual(b'gmscore', by_path[GMSCORE_PATH.removeprefix('/product')].data)
+        self.assertEqual(b'companion', by_path[COMPANION_PATH.removeprefix('/product')].data)
+        self.assertNotIn('/product', {str(request.path) for request in product.requests})
+        self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
         self.assertEqual({'product'}, module.requirements().ext_images)
+
+
+    def test_installs_into_real_product_image_root(self) -> None:
+        # AFSR represents product.img at "/", NOT at "/product". This is
+        # intentionally a real ExtFs installer, not a recording fake.
+        context_data = context()
+        self.addCleanup(close_context, context_data)
+        module = MicroGModule(context_data)
+        with tempfile.TemporaryDirectory() as tempdir:
+            tree = Path(tempdir)
+            parents = (
+                '/',
+                '/etc',
+                '/etc/permissions',
+                '/etc/default-permissions',
+                '/etc/sysconfig',
+                '/priv-app',
+            )
+            entries = []
+            for path in parents:
+                if path != '/':
+                    (tree / path.lstrip('/')).mkdir(parents=True, exist_ok=True)
+                entries.append(ExtEntry(
+                    path=PurePosixPath(path),
+                    file_type='Directory',
+                    file_mode=0o755,
+                    uid=0,
+                    gid=0,
+                    xattrs={'security.selinux': 'u:object_r:system_file:s0\\0'},
+                ))
+            fs = ExtFs(
+                info=ExtInfo(
+                    metadata={
+                        'features': [],
+                        'block_size': 4096,
+                        'reserved_percentage': 0,
+                        'uuid': '00000000-0000-0000-0000-000000000000',
+                    },
+                    entries=entries,
+                ),
+                tree=tree,
+                contexts=[(re.compile(r'/.*'), 'u:object_r:system_file:s0')],
+            )
+            report = module.inject({}, {'product': fs}, ())
+            self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
+            self.assertEqual(
+                b'gmscore',
+                (tree / GMSCORE_PATH.removeprefix('/product/')).read_bytes(),
+            )
+            self.assertEqual(
+                b'companion',
+                (tree / COMPANION_PATH.removeprefix('/product/')).read_bytes(),
+            )
+            self.assertEqual(9, len(fs.info.entries) - len(parents))
+            self.assertNotIn(PurePosixPath('/product'), {
+                entry.path for entry in fs.info.entries
+            })
 
     def test_checked_in_lock_matches_reviewed_release(self) -> None:
         lock, _ = load_canonical_lock(
