@@ -4,6 +4,7 @@
 from contextlib import redirect_stderr
 import io
 import os
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -342,6 +343,131 @@ class ToolRunnerTest(unittest.TestCase):
                 signing_environment_names=('LD_PRELOAD',),
             )
         call.assert_not_called()
+
+
+    @staticmethod
+    def _source_care_map_log() -> str:
+        return (
+            '0.000s  INFO Verifying whole-file signature\n'
+            '1.000s  INFO Verifying payload\n'
+            '2.000s  INFO Verifying partition hashes\n'
+            '3.000s  INFO Verifying AVB signatures\n'
+            "4.000s  INFO Checking recovery ramdisk's otacerts.zip\n"
+            '5.000s  INFO Verifying care map\n'
+            '5.001s ERROR Care map does not match:\n'
+            'Actual: CareMap {\n    partitions: [],\n}\n'
+            'Expected: CareMap {\n    partitions: [],\n}\n'
+            '5.002s ERROR Encountered 1 error(s) during verification\n'
+        )
+
+    def test_source_care_map_compatibility_keeps_source_trust_anchors(self) -> None:
+        signed_log = self._source_care_map_log()
+        with (
+            mock.patch(
+                'lib.external.subprocess.run',
+                return_value=mock.Mock(returncode=1, stdout=signed_log),
+            ) as subprocess_run,
+            mock.patch('sys.stdout.write'),
+            mock.patch('sys.stdout.flush'),
+        ):
+            accepted = external.verify_ota(
+                Path('source.zip'),
+                Path('source-avb-pub.bin'),
+                Path('source-ota-cert.pem'),
+                allow_source_care_map_mismatch=True,
+            )
+        self.assertTrue(accepted)
+        command = subprocess_run.call_args.args[0]
+        self.assertEqual('avbroot', command[0])
+        self.assertIn('--public-key-avb', command)
+        self.assertIn('source-avb-pub.bin', command)
+        self.assertIn('--cert-ota', command)
+        self.assertIn('source-ota-cert.pem', command)
+        self.assertFalse(subprocess_run.call_args.kwargs.get('shell', False))
+
+        with (
+            mock.patch('lib.external.subprocess.run') as subprocess_run,
+            self.assertRaisesRegex(ValueError, 'AVB key and OTA certificate'),
+        ):
+            external.verify_ota(
+                Path('source.zip'),
+                Path('source-avb-pub.bin'),
+                None,
+                allow_source_care_map_mismatch=True,
+            )
+        subprocess_run.assert_not_called()
+
+    def test_source_care_map_mismatch_must_be_only_verification_error(self) -> None:
+        valid = self._source_care_map_log()
+        wrong_outputs = [
+            valid.replace('Encountered 1 error(s)', 'Encountered 2 error(s)'),
+            valid.replace(
+                '5.002s ERROR Encountered',
+                '5.001s ERROR AVB signature invalid\n'
+                '5.002s ERROR Encountered',
+            ),
+            valid.replace('INFO Verifying AVB signatures', 'INFO Skipping AVB'),
+            valid.replace('Actual: CareMap {', 'Actual: unparseable'),
+            valid.replace(
+                '5.001s ERROR Care map does not match:',
+                '5.001s ERROR OTA certificate invalid',
+            ),
+            valid + ('x' * 262144),
+        ]
+        for transcript in wrong_outputs:
+            with self.subTest(transcript=transcript[-100:]), (
+                mock.patch(
+                    'lib.external.subprocess.run',
+                    return_value=mock.Mock(returncode=1, stdout=transcript),
+                ),
+                mock.patch('sys.stdout.write'),
+                mock.patch('sys.stdout.flush'),
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                external.verify_ota(
+                    Path('source.zip'),
+                    Path('source-avb-pub.bin'),
+                    Path('source-ota-cert.pem'),
+                    allow_source_care_map_mismatch=True,
+                )
+
+    def test_successful_source_check_needs_no_compatibility(self) -> None:
+        with (
+            mock.patch(
+                'lib.external.subprocess.run',
+                return_value=mock.Mock(returncode=0, stdout='OK!\n'),
+            ),
+            mock.patch('sys.stdout.write'),
+            mock.patch('sys.stdout.flush'),
+        ):
+            self.assertFalse(external.verify_ota(
+                Path('source.zip'),
+                Path('source-avb-pub.bin'),
+                Path('source-ota-cert.pem'),
+                allow_source_care_map_mismatch=True,
+            ))
+
+    def test_prefixed_compatibility_check_uses_authenticator_and_clean_env(self) -> None:
+        external.configure_tool_runner(PREFIX)
+        with (
+            mock.patch.dict(os.environ, {'LD_PRELOAD': '/tmp/inject.so'}),
+            mock.patch(
+                'lib.external.subprocess.run',
+                return_value=mock.Mock(returncode=0, stdout='OK!\n'),
+            ) as call,
+            mock.patch('sys.stdout.write'),
+            mock.patch('sys.stdout.flush'),
+        ):
+            external.verify_ota(
+                Path('source.zip'),
+                Path('source-avb-pub.bin'),
+                Path('source-ota-cert.pem'),
+                allow_source_care_map_mismatch=True,
+            )
+        command = call.call_args.args[0]
+        self.assertEqual(list(PREFIX) + ['avbroot', '--'], command[:len(PREFIX) + 2])
+        self.assertNotIn('LD_PRELOAD', call.call_args.kwargs['env'])
+        self.assertNotIn('PYTHONPATH', call.call_args.kwargs['env'])
 
 
 if __name__ == '__main__':
