@@ -29,7 +29,9 @@ class RecordingProduct:
     def __init__(self) -> None:
         self.requests = None
 
-    def install(self, requests):
+    def install(self, requests, *, label_mountpoint=''):
+        if label_mountpoint != '/product':
+            raise AssertionError('microG must use mounted product SELinux labels')
         self.requests = tuple(requests)
         return tuple(
             ExtInstallResult(Path(request.path), 'created')
@@ -167,7 +169,16 @@ class MicroGAdapterTest(unittest.TestCase):
                     entries=entries,
                 ),
                 tree=tree,
-                contexts=[(re.compile(r'/.*'), 'u:object_r:system_file:s0')],
+                contexts=[
+                    (
+                        re.compile(r'/product/priv-app(?:/.*)?'),
+                        'u:object_r:privapp_data_file:s0',
+                    ),
+                    (
+                        re.compile(r'/product/.*'),
+                        'u:object_r:system_file:s0',
+                    ),
+                ],
             )
             report = module.inject({}, {'product': fs}, ())
             self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
@@ -180,6 +191,18 @@ class MicroGAdapterTest(unittest.TestCase):
                 (tree / COMPANION_PATH.removeprefix('/product/')).read_bytes(),
             )
             self.assertEqual(9, len(fs.info.entries) - len(parents))
+            labels = {
+                str(entry.path): entry.xattrs['security.selinux']
+                for entry in fs.info.entries
+            }
+            self.assertEqual(
+                'u:object_r:privapp_data_file:s0\\0',
+                labels['/priv-app/GmsCore/GmsCore.apk'],
+            )
+            self.assertEqual(
+                'u:object_r:system_file:s0\\0',
+                labels['/etc/permissions/privapp-permissions-com.google.android.gms.xml'],
+            )
             self.assertNotIn(PurePosixPath('/product'), {
                 entry.path for entry in fs.info.entries
             })
