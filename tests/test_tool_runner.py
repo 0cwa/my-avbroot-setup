@@ -415,7 +415,8 @@ class ToolRunnerTest(unittest.TestCase):
             valid + ('x' * 262144),
         ]
         for transcript in wrong_outputs:
-            with self.subTest(transcript=transcript[-100:]), (
+            with (
+                self.subTest(transcript=transcript[-100:]),
                 mock.patch(
                     'lib.external.subprocess.run',
                     return_value=mock.Mock(returncode=1, stdout=transcript),
