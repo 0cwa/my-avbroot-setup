@@ -116,6 +116,41 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
             )
         verify.assert_called_once_with(self.primary, self.expected_key, self.cert)
 
+    def test_wrong_output_ota_certificate_fails_strict_verification(self) -> None:
+        self._write_zip(self.primary)
+        with (
+            mock.patch.object(
+                external, 'encode_output_avb_public_key',
+                side_effect=self._encode_fixture,
+            ),
+            mock.patch.object(
+                external, 'verify_ota',
+                side_effect=subprocess.CalledProcessError(1, ['avbroot', 'ota', 'verify']),
+            ) as verify,
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            patch_script._verify_outputs_after_source_care_map_exception(
+                self._args(), self.key, self.root,
+            )
+        verify.assert_called_once_with(self.primary, self.expected_key, self.cert)
+
+    def test_duplicate_care_maps_are_rejected_before_verification(self) -> None:
+        self._write_zip(self.primary)
+        with zipfile.ZipFile(self.primary, 'a') as archive:
+            archive.writestr('care_map.pb', b'second-copy')
+        with (
+            mock.patch.object(
+                external, 'encode_output_avb_public_key',
+                side_effect=self._encode_fixture,
+            ),
+            mock.patch.object(external, 'verify_ota') as verify,
+            self.assertRaisesRegex(RuntimeError, 'unique, nonempty'),
+        ):
+            patch_script._verify_outputs_after_source_care_map_exception(
+                self._args(), self.key, self.root,
+            )
+        verify.assert_not_called()
+
     def test_secondary_verification_failure_precedes_any_sidecars(self) -> None:
         args = self._args(paired=True)
         args.input = self.root / 'original.zip'
