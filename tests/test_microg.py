@@ -154,7 +154,7 @@ class MicroGAdapterTest(unittest.TestCase):
                     file_mode=0o755,
                     uid=0,
                     gid=0,
-                    xattrs={'security.selinux': 'u:object_r:system_file:s0\\0'},
+                    xattrs={'security.selinux': 'u:object_r:system_file:s0\0'},
                 ))
             fs = ExtFs(
                 info=ExtInfo(
