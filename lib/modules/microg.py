@@ -285,7 +285,10 @@ class MicroGModule(Module):
                 COMPANION_DEFAULT_PERMISSIONS_XML,
             ),
         )
-        results = product.install(requests)
+        # Check SELinux labels against Android's mounted /product paths while
+        # writing to the product image root. Do not alter label semantics for
+        # legacy system-image adapters or mutate shared context tables.
+        results = product.install(requests, label_mountpoint='/product')
         # Keep patch-report paths in their mounted Android namespace, while
         # all ExtFs writes and metadata paths use product.img-relative paths.
         status_by_path = {
