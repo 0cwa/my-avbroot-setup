@@ -325,6 +325,34 @@ def _patch_ota_outputs(
         )
 
 
+
+def _verify_outputs_after_source_care_map_exception(
+    args: argparse.Namespace,
+    sign_key_avb: external.SigningKey,
+    temp_dir: Path,
+) -> None:
+    """No compatibility exception is ever allowed on regenerated OTA outputs.
+
+    Pin the expected output OTA certificate AND the AVB public key derived
+    from the configured output signing key. Check every output (including a
+    secondary Magisk OTA) before creating any publication sidecars or report.
+    """
+    public_key_avb = temp_dir / 'expected-output-avb-pkmd.bin'
+    external.encode_output_avb_public_key(sign_key_avb, public_key_avb)
+
+    for output, _ in _patch_output_plans(args):
+        with zipfile.ZipFile(output) as archive:
+            if (
+                archive.namelist().count('care_map.pb') != 1
+                or archive.getinfo('care_map.pb').file_size == 0
+            ):
+                raise RuntimeError(
+                    'patched OTA has no unique, nonempty rebuilt care_map.pb: '
+                    f'{output}'
+                )
+        external.verify_ota(output, public_key_avb, args.sign_cert_ota)
+
+
 def _run(
     args: argparse.Namespace,
     temp_dir: Path,
@@ -546,17 +574,9 @@ def _run(
     )
 
     if source_care_map_mismatch:
-        # No output gets a care-map exception. The signed replacement OTAs
-        # must each contain a freshly generated care map that passes normal
-        # avbroot verification, including all partition and signature checks.
-        for output, _ in _patch_output_plans(args):
-            with zipfile.ZipFile(output) as archive:
-                if 'care_map.pb' not in archive.namelist():
-                    raise RuntimeError(
-                        'patched OTA has no rebuilt care_map.pb: '
-                        f'{output}'
-                    )
-            external.verify_ota(output, None, args.sign_cert_ota)
+        _verify_outputs_after_source_care_map_exception(
+            args, sign_key_avb, temp_dir,
+        )
 
     if not args.skip_custota_tool:
         # Generate Custota csig.
