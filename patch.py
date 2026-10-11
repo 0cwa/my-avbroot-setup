@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 import tomlkit
 
-from lib import external, modules
+from lib import care_map_compat, external, modules
 from lib import filesystem
 from lib.filesystem import CpioFs, CpioInfo, ExtFs, ExtInfo
 from lib.modules.registry import (
@@ -351,6 +351,12 @@ def _verify_outputs_after_source_care_map_exception(
                     f'{output}'
                 )
         external.verify_ota(output, public_key_avb, args.sign_cert_ota)
+        # Cryptographic validity alone is insufficient: Android's
+        # update_verifier skips care-map partitions if their fingerprints
+        # differ from runtime build properties. Compare identities against
+        # the independently authenticated source map; a future intentional
+        # fingerprint change requires explicit new review.
+        care_map_compat.verify_fingerprint_identity_preserved(args.input, output)
 
 
 def _run(
