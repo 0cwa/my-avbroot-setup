@@ -208,6 +208,58 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
         metadata.assert_not_called()
         report.assert_not_called()
 
+    def test_secondary_identity_drift_blocks_sidecars_and_report(self) -> None:
+        args = self._args(paired=True)
+        args.verify_public_key_avb = self.root / 'source-pkmd.bin'
+        args.verify_cert_ota = self.root / 'source-ota.crt'
+        args.sign_key_avb = self.key.key
+        args.sign_key_ota = self.root / 'output-ota.key'
+        args.pass_avb_env_var = 'AVB_PASS'
+        args.pass_ota_env_var = None
+        args.pass_avb_file = None
+        args.pass_ota_file = None
+        args.skip_custota_tool = False
+        args.compatible_sepolicy = False
+        args.allow_source_care_map_mismatch = True
+
+        def patch_outputs(*unused) -> None:
+            self._write_zip(self.primary)
+            self._write_zip(self.secondary)
+
+        def check_identity(source: Path, output: Path) -> None:
+            self.assertEqual(args.input, source)
+            if output == self.secondary:
+                raise RuntimeError('regenerated care_map.pb changes runtime fingerprint')
+
+        with (
+            mock.patch.object(patch_script.modules, 'all_modules', return_value=[]),
+            mock.patch.object(patch_script, '_patch_ota_outputs',
+                              side_effect=patch_outputs) as patch_outputs_call,
+            mock.patch.object(external, 'verify_ota',
+                              side_effect=lambda ota, *_a, **_k: ota == args.input) as verify,
+            mock.patch.object(external, 'encode_output_avb_public_key',
+                              side_effect=self._encode_fixture),
+            mock.patch.object(
+                patch_script.care_map_compat, 'verify_fingerprint_identity_preserved',
+                side_effect=check_identity,
+            ) as fingerprint_guard,
+            mock.patch.object(external, 'generate_csig') as csig,
+            mock.patch.object(external, 'generate_update_info') as metadata,
+            mock.patch.object(patch_script, 'write_patch_report') as report,
+            self.assertRaisesRegex(RuntimeError, 'runtime fingerprint'),
+        ):
+            patch_script._run(args, self.root, None, ())
+
+        patch_outputs_call.assert_called_once()
+        self.assertEqual(3, verify.call_count)
+        self.assertEqual([
+            mock.call(args.input, self.primary),
+            mock.call(args.input, self.secondary),
+        ], fingerprint_guard.call_args_list)
+        csig.assert_not_called()
+        metadata.assert_not_called()
+        report.assert_not_called()
+
     def test_output_key_encoding_uses_signing_passphrase_and_no_shell(self) -> None:
         with (
             mock.patch.object(external, '_run_command',
