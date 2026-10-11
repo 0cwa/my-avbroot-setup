@@ -28,6 +28,7 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
 
     def _args(self, *, paired: bool = False) -> SimpleNamespace:
         return SimpleNamespace(
+            input=self.root / 'original.zip',
             output=self.primary,
             patch_arg=['--rootless'],
             secondary_output=self.secondary if paired else None,
@@ -55,6 +56,9 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
                 side_effect=self._encode_fixture,
             ) as encode,
             mock.patch.object(external, 'verify_ota') as verify,
+            mock.patch.object(
+                patch_script.care_map_compat, 'verify_fingerprint_identity_preserved'
+            ) as fingerprint_guard,
         ):
             patch_script._verify_outputs_after_source_care_map_exception(
                 self._args(paired=True), self.key, self.root,
@@ -67,6 +71,10 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
         ], verify.call_args_list)
         for call in verify.call_args_list:
             self.assertNotIn('allow_source_care_map_mismatch', call.kwargs)
+        self.assertEqual([
+            mock.call(self.root / 'original.zip', self.primary),
+            mock.call(self.root / 'original.zip', self.secondary),
+        ], fingerprint_guard.call_args_list)
 
     def test_missing_care_map_is_rejected_without_verification(self) -> None:
         self._write_zip(self.primary, map_value=None)
@@ -183,6 +191,9 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
                               side_effect=verify_ota) as verify,
             mock.patch.object(external, 'encode_output_avb_public_key',
                               side_effect=self._encode_fixture),
+            mock.patch.object(
+                patch_script.care_map_compat, 'verify_fingerprint_identity_preserved'
+            ) as fingerprint_guard,
             mock.patch.object(external, 'generate_csig') as csig,
             mock.patch.object(external, 'generate_update_info') as metadata,
             mock.patch.object(patch_script, 'write_patch_report') as report,
@@ -192,6 +203,7 @@ class SourceCareMapOutputVerificationTest(unittest.TestCase):
 
         patch_outputs_call.assert_called_once()
         self.assertEqual(3, verify.call_count)  # source, primary, secondary
+        fingerprint_guard.assert_called_once_with(args.input, self.primary)
         csig.assert_not_called()
         metadata.assert_not_called()
         report.assert_not_called()
