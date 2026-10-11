@@ -49,3 +49,7 @@ A standalone research-only Python prototype implements strict protobuf parsing, 
 - Production source digest pin stays empty. No source exception activation, branch merge, OTA build/publication, or upstream maintainer contact is authorized.
 
 **Disposition:** Sound conservative design and passing synthetic prototype tests, but **integration and release blocked**.
+
+## Mandatory pre-sign / post-sign separation
+
+At patch time the proof is **provisional**: the patch engine can hash generated raw images and compare protected blocks, but those expected output hashes are not yet bound to any signed OTA. After the output OTA has been signed, independently verify its configured OTA signer, payload signatures, configured AVB signer and descriptor chain, recovery certificate, and signed payload partition hashes; **re-extract every final image and repeat the same fingerprint / changed-block / sparse-range proof against the authenticated source**. Only this signed-output postflight proof can allow sidecars, reports, or publication. Never trust pre-sign expected hashes as final signed-manifest evidence.
