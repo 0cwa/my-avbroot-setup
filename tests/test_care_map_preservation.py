@@ -343,5 +343,44 @@ class PreservationProofReferenceTests(unittest.TestCase):
         self.assertNotIn("first_boot_verified", result)
 
 
+class HistoricalCareMapExtentBoundaryTests(unittest.TestCase):
+    """Validate original pdx235 half-open endpoints without giant images.
+
+    This validates membership and range encoding, NOT provenance of block
+    change locations, which requires real manifest-authenticated image bytes.
+    """
+
+    def test_all_historical_source_endpoints_are_half_open(self):
+        f = ref.witness()
+        for p in f["partitions"]:
+            bound = ref.parse_ranges(p["avb_v3_34_1_ranges"])[0][1]
+            ranges = ref.parse_ranges(p["source_ranges"], extent_blocks=bound)
+            with self.subTest(partition=p["name"]):
+                self.assertEqual(p["source_ranges"], ref.raw_ranges(ranges))
+                self.assertEqual(0, ranges[0][0])
+                for start, end in ranges:
+                    self.assertTrue(any(a <= start < b for a, b in ranges))
+                    self.assertTrue(any(a <= end - 1 < b for a, b in ranges))
+                    self.assertFalse(any(a <= end < b for a, b in ranges))
+                self.assertFalse(any(a <= bound < b for a, b in ranges))
+
+    def test_actual_high_sparse_ranges_must_not_be_expanded_to_contiguous(self):
+        witness = ref.witness()
+        partitions = {p["name"]: p for p in witness["partitions"]}
+        # End is exclusive: product block 589824 is selected; 589825 is not.
+        samples = (("product", 589824, 589825),
+                   ("system", 262144, 262145),
+                   ("system_ext", 131072, 131073))
+        for name, inside, outside in samples:
+            with self.subTest(partition=name):
+                spans = ref.parse_ranges(partitions[name]["source_ranges"])
+                self.assertTrue(any(s <= inside < e for s, e in spans))
+                self.assertFalse(any(s <= outside < e for s, e in spans))
+                avb_extent = ref.parse_ranges(
+                    partitions[name]["avb_v3_34_1_ranges"]
+                )[0][1]
+                self.assertLess(outside, avb_extent)
+
+
 if __name__ == "__main__":
     unittest.main()
