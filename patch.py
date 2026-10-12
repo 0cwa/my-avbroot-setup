@@ -315,8 +315,11 @@ def _patch_ota_outputs(
     sign_key_avb: external.SigningKey,
     sign_key_ota: external.SigningKey,
     replacements: dict[str, Path],
+    expected_care_map: Path | None = None,
 ) -> None:
     for output, patch_args in _patch_output_plans(args):
+        if expected_care_map is not None:
+            patch_args = [*patch_args, '--expected-care-map', str(expected_care_map)]
         external.patch_ota(
             args.input,
             output,
@@ -558,14 +561,7 @@ def _run(
             source_entries, replacements, temp_dir / 'output-map',
             implicit_system_extent=implicit_system_extent,
         )
-        for output, patch_args in _patch_output_plans(args):
-            external.patch_ota(
-                args.input, output, sign_key_avb, sign_key_ota,
-                args.sign_cert_ota, replacements,
-                [*patch_args, '--expected-care-map', str(expected_output)],
-            )
-    else:
-        _patch_ota_outputs(args, sign_key_avb, sign_key_ota, replacements)
+    _patch_ota_outputs(args, sign_key_avb, sign_key_ota, replacements, expected_output)
 
     # Prepared replacements are no longer needed once both payloads exist.
     shutil.rmtree(images_dir, ignore_errors=True)
