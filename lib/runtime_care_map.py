@@ -90,7 +90,7 @@ def filesystem_fingerprint(image: Path, name: str, scratch: Path) -> str:
 
 
 def verify_output(ota: Path, expected: Path, public_key: Path, certificate: Path,
-                  scratch: Path) -> dict[str, dict[str, str]]:
+                  scratch: Path, *, source: bool = False) -> dict[str, dict[str, str]]:
     """Authenticate first, bind each newly extracted image, then read properties."""
     scratch.mkdir()
     report = scratch / 'verified.json'
@@ -99,6 +99,10 @@ def verify_output(ota: Path, expected: Path, public_key: Path, certificate: Path
     evidence = json.loads(report.read_text())
     if evidence.get('schema') != 'avbroot-ota-verification-v1':
         raise ValueError('unsupported authenticated verification report')
+    if not source:
+        headers = evidence['avb_headers']
+        if not headers or any(header['flags'] != 0 for header in headers):
+            raise ValueError('final OTA disables effective AVB verification')
     entries = read_map(ota)
     required = evidence['required_care_map_partitions']
     if len(required) != len(set(required)) or set(required) != set(entries):
@@ -130,7 +134,8 @@ def verify_output(ota: Path, expected: Path, public_key: Path, certificate: Path
 
 
 def expected_output_map(source: dict[str, dict[str, str]],
-                        replacements: dict[str, Path], scratch: Path) -> Path:
+                        replacements: dict[str, Path], scratch: Path, *,
+                        implicit_system_extent: int | None = None) -> Path:
     """Unchanged sparse ranges survive; replaced ext4 images care for all data.
 
     avbroot subsequently proves deterministic payload writes for every cared
@@ -138,6 +143,10 @@ def expected_output_map(source: dict[str, dict[str, str]],
     """
     scratch.mkdir()
     entries = {name: dict(entry) for name, entry in source.items()}
+    if implicit_system_extent is not None and 'system' not in replacements:
+        if implicit_system_extent <= 0 or implicit_system_extent % BLOCK_SIZE:
+            raise ValueError('invalid authenticated implicit system extent')
+        entries['system']['ranges'] = f'2,0,{implicit_system_extent // BLOCK_SIZE}'
     for name in sorted(set(source) & set(replacements)):
         directory = scratch / name
         directory.mkdir()

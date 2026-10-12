@@ -18,8 +18,8 @@ class PostflightTest(unittest.TestCase):
                 root = Path(temp)
                 args = SimpleNamespace(
                     input=root/'source.zip', output=root/'rootless.zip',
-                    secondary_output=root/'magisk.zip', patch_arg=['--rootless'],
-                    secondary_patch_arg=['--magisk'], sign_key_avb=root/'avb.key',
+                    secondary_output=root/'magisk.zip', patch_arg=['--rootless', '--skip-system-ota-cert'],
+                    secondary_patch_arg=['--magisk', '--skip-system-ota-cert'], sign_key_avb=root/'avb.key',
                     sign_key_ota=root/'ota.key', sign_cert_ota=root/'ota.crt',
                     verify_public_key_avb=root/'source.pk', verify_cert_ota=root/'source.crt',
                     pass_avb_env_var=None, pass_ota_env_var=None, pass_avb_file=None,
@@ -77,7 +77,7 @@ class PayloadBindingTest(unittest.TestCase):
         import hashlib
         import json
         import zipfile
-        for failure in ('hash', 'property', 'required-set', None):
+        for failure in ('hash', 'property', 'required-set', 'avb-flags', None):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 ota = root/'ota.zip'
@@ -89,7 +89,7 @@ class PayloadBindingTest(unittest.TestCase):
                 image = b'protected-data'.ljust(4096, b'\0')
                 def verified(*args, verification_report, **kwargs):
                     verification_report.write_text(json.dumps(dict(
-                        schema='avbroot-ota-verification-v1',
+                        schema='avbroot-ota-verification-v1', avb_headers=[dict(name='vbmeta', flags=3 if failure == 'avb-flags' else 0)],
                         required_care_map_partitions=[] if failure == 'required-set' else ['odm'],
                         partitions=[dict(name='odm', image_size=len(image),
                             image_sha256=hashlib.sha256(image).hexdigest(), verity_data_size=4096)])))
@@ -107,7 +107,7 @@ class PayloadBindingTest(unittest.TestCase):
                     else:
                         with self.assertRaises(ValueError):
                             runtime_care_map.verify_output(ota, expected, root/'key', root/'cert', root/'proof')
-                    if failure in ('hash','required-set'):
+                    if failure in ('hash','required-set','avb-flags'):
                         props.assert_not_called()
 
 

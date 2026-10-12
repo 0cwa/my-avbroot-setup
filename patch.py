@@ -6,6 +6,7 @@
 import argparse
 import dataclasses
 import logging
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -392,7 +393,7 @@ def _run(
         runtime_care_map.write_map(runtime_care_map.read_map(args.input), source_expected)
         source_entries = runtime_care_map.verify_output(
             args.input, source_expected, args.verify_public_key_avb,
-            args.verify_cert_ota, temp_dir / 'source-proof',
+            args.verify_cert_ota, temp_dir / 'source-proof', source=True,
         )
     else:
         external.verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
@@ -542,8 +543,17 @@ def _run(
     }
     expected_output = None
     if runtime_map:
+        implicit_system_extent = None
+        if any('--skip-system-ota-cert' not in patch_args
+               for _, patch_args in _patch_output_plans(args)):
+            source_report = json.loads((temp_dir / 'source-proof' / 'verified.json').read_text())
+            implicit_system_extent = next(
+                record['verity_data_size'] for record in source_report['partitions']
+                if record['name'] == 'system'
+            )
         expected_output = runtime_care_map.expected_output_map(
             source_entries, replacements, temp_dir / 'output-map',
+            implicit_system_extent=implicit_system_extent,
         )
         for output, patch_args in _patch_output_plans(args):
             external.patch_ota(

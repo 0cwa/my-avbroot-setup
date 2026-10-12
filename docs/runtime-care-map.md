@@ -18,10 +18,16 @@ Property extraction scratch trees are removed after each read, including
 failures, and verified partition images are released before the next output.
 Only the small successful verifier reports remain for evidence.
 
+Final runtime-mode outputs must enable AVB verification in every verified
+header. Authentic source header flags are recorded without relaxing final
+output policy.
+
 Unmodified partitions preserve authenticated sparse ranges. Replaced ext4
 partitions receive the complete final AVB-protected data extent; avbroot must
 prove that the final signed payload deterministically writes every cared
-block. New microG allocations can therefore extend outside the original
+block. The implicit system OTA-certificate patch also receives full protected
+data ranges, using its authenticated unchanged data extent; runtime-mode
+avbroot recompresses that modified image completely. New microG allocations can therefore extend outside the original
 sparse care ranges. Runtime identities must remain unchanged.
 
 Each final output is independently verified with the configured OTA
