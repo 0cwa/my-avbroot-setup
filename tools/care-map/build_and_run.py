@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -100,12 +101,17 @@ def build_prefix(args: argparse.Namespace) -> tuple[list[str], dict[str, object]
         '--no-default-features'], cwd=checkout)
     binary = checkout / 'target' / 'release' / 'avbroot'
     digest, size = sha256(binary), binary.stat().st_size
-    prefix = ['/usr/bin/python3', str(DIRECTORY / 'dev_tool_runner.py'),
-        '--modos-repo', str(modos), '--bootstrap-workdir', str(args.bootstrap_workdir.resolve()),
-        '--built-binary', str(binary), '--built-sha256', digest, '--built-size', str(size)]
-    # Capture identities from the same controlled compiler environment.
+    # Capture identities before discarding the fresh checkout and its large
+    # compilation intermediates. Keep only the newly measured executable;
+    # the parent still authorizes its bytes, never the generated receipt.
     rustc = subprocess.check_output(['rustc', '-vV'], env=environment, text=True).strip()
     cargo = subprocess.check_output(['cargo', '-V'], env=environment, text=True).strip()
+    retained_binary = work / 'avbroot'
+    binary.replace(retained_binary)
+    shutil.rmtree(checkout)
+    prefix = ['/usr/bin/python3', str(DIRECTORY / 'dev_tool_runner.py'),
+        '--modos-repo', str(modos), '--bootstrap-workdir', str(args.bootstrap_workdir.resolve()),
+        '--built-binary', str(retained_binary), '--built-sha256', digest, '--built-size', str(size)]
     receipt = {'schema': 'avbroot-development-build-v1', 'source': manifest,
         'helper_revision': helper_revision,
         'rustc': rustc, 'cargo': cargo, 'binary_sha256': digest, 'binary_size': size,
