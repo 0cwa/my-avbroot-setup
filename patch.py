@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import zipfile
 import tomlkit
@@ -265,7 +266,7 @@ def parse_args():
         args.verify_public_key_avb is None or args.verify_cert_ota is None
     ):
         parser.error(
-            '--allow-source-care-map-mismatch requires both '
+            '--runtime-care-map requires both '
             '--verify-public-key-avb and --verify-cert-ota'
         )
 
@@ -522,6 +523,7 @@ def _run(
 
         external.pack_fs(paths.raw_image, paths.unpacked)
         external.pack_avb(paths.image, paths.unpacked, sign_key_avb, True)
+        shutil.rmtree(paths.unpacked)
 
     # Repack boot images.
     for name, fs in boot_fs.items():
@@ -533,6 +535,7 @@ def _run(
         external.pack_cpio(paths.ramdisk, paths.unpacked)
         external.pack_boot(paths.raw_image, paths.unpacked)
         external.pack_avb(paths.image, paths.unpacked, sign_key_avb, False)
+        shutil.rmtree(paths.unpacked)
 
     # Patch one or two OTA outputs from the same prepared replacement images.
     # The secondary output path intentionally reuses all expensive verification,
@@ -563,6 +566,9 @@ def _run(
             )
     else:
         _patch_ota_outputs(args, sign_key_avb, sign_key_ota, replacements)
+
+    # Prepared replacements are no longer needed once both payloads exist.
+    shutil.rmtree(images_dir, ignore_errors=True)
 
     # Both final signed payloads must pass before any sidecar or success report.
     public_key_avb = temp_dir / 'expected-output-avb-pkmd.bin'
