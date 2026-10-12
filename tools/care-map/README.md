@@ -49,6 +49,7 @@ python3 tools/care-map/build_and_run.py \
   --bootstrap-workdir /path/to/authenticated-tools \
   --build-workdir /path/to/work/new-candidate-build \
   -- --runtime-care-map --input source.zip --output output.zip \
+  --verify-public-key-avb source-avb_pkmd.bin --verify-cert-ota trusted-lineage-ota.pem \
   --sign-key-avb existing-avb.key --sign-key-ota existing-ota.key --sign-cert-ota existing-ota.pem \
   --patch-arg=--rootless --patch-arg=--clear-vbmeta-flags --skip-custota-tool
 ```
