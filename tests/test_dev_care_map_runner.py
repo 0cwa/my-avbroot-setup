@@ -115,7 +115,7 @@ class DevelopmentRunnerTests(unittest.TestCase):
                     checkout = Path(command[-1])
                     (checkout / '.git').mkdir(parents=True)
                     (checkout / 'Cargo.lock').write_bytes(lock)
-                elif command[:2] == ['cargo', 'build']:
+                elif Path(command[0]).name == 'cargo' and command[1] == 'build':
                     target = kwargs['cwd'] / 'target' / 'release'
                     target.mkdir(parents=True)
                     shutil.copyfile('/bin/echo', target / 'avbroot')
@@ -124,6 +124,7 @@ class DevelopmentRunnerTests(unittest.TestCase):
             with mock.patch.object(builder, 'load_source', return_value=(manifest, b'patch', 'reviewed')), \
                  mock.patch.object(builder, 'require_clean'), \
                  mock.patch.object(builder.subprocess, 'run', side_effect=compile_step), \
+                 mock.patch.object(builder, 'pinned_compiler', return_value=(Path('/pinned/cargo'), Path('/pinned/rustc'))), \
                  mock.patch.object(builder.subprocess, 'check_output', side_effect=['rustc provenance', 'cargo provenance']):
                 prefix, receipt = builder.build_prefix(args)
             binary = work / 'avbroot'
@@ -140,9 +141,9 @@ class DevelopmentRunnerTests(unittest.TestCase):
         builder = load('build_and_run')
         with mock.patch.dict(builder.os.environ, {'PASSPHRASE_OTA': 'private',
             'KEYS_AVB_BASE64': 'private', 'GH_TOKEN': 'private',
-            'RUSTC_WRAPPER': '/unreviewed-wrapper', 'HTTPS_PROXY': 'https://session-proxy'}):
+            'RUSTC_WRAPPER': '/unreviewed-wrapper', 'RUSTC': '/unreviewed-compiler', 'HTTPS_PROXY': 'https://session-proxy'}):
             environment = builder.compiler_environment(Path('/work/cargo'), Path('/work/rustup'), '1.99.0')
-        for secret in ('PASSPHRASE_OTA', 'KEYS_AVB_BASE64', 'GH_TOKEN', 'RUSTC_WRAPPER'):
+        for secret in ('PASSPHRASE_OTA', 'KEYS_AVB_BASE64', 'GH_TOKEN', 'RUSTC_WRAPPER', 'RUSTC'):
             self.assertNotIn(secret, environment)
         self.assertEqual(environment['HTTPS_PROXY'], 'https://session-proxy')
         self.assertEqual(environment['CARGO_HOME'], '/work/cargo')

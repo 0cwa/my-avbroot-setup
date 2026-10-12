@@ -87,3 +87,13 @@ historical measured binary digest in `avbroot-build-provenance.json`.
 Building or preparing a prefix does not establish first boot, OTA persistence,
 microG runtime behavior, or permission to publish. Keep device acceptance and
 publication gates in their existing owning workflow.
+
+Cold task Cargo/rustup homes are supported: toolchain installation disables
+rustup self-update, then the builder resolves and invokes the pinned toolchain's
+actual Cargo/Rustc binaries. Global proxy executables and caller compiler overrides
+do not select the build compiler. Run the explicit network smoke independently
+of default unit discovery to exercise empty homes and a tiny offline build:
+
+```sh
+python3 tests/cold_source_toolchain_smoke.py --workdir /path/to/work/cold-rust-smoke
+```

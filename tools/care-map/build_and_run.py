@@ -73,6 +73,24 @@ def compiler_environment(cargo_home: Path, rustup_home: Path, toolchain: str) ->
     return environment
 
 
+def pinned_compiler(environment: dict[str, str], toolchain: str) -> tuple[Path, Path]:
+    """Resolve installed toolchain binaries without invoking global rustup proxies."""
+    programs = []
+    for name in ('cargo', 'rustc'):
+        value = subprocess.check_output(['rustup', 'which', '--toolchain',
+            toolchain, name], env=environment, text=True).strip()
+        program = Path(value)
+        if not program.is_absolute() or not program.is_file():
+            raise ValueError(f'pinned toolchain {name} is unavailable')
+        programs.append(program)
+    cargo, rustc = programs
+    # This value is derived internally from the installed pinned toolchain;
+    # caller RUSTC/RUSTC_WRAPPER values never enter the compiler environment.
+    environment['RUSTC'] = str(rustc)
+    environment['PATH'] = str(rustc.parent) + os.pathsep + environment.get('PATH', '')
+    return cargo, rustc
+
+
 def build_prefix(args: argparse.Namespace) -> tuple[list[str], dict[str, object]]:
     manifest, patch_bytes, helper_revision = load_source()
     modos = args.modos_repo.resolve()
@@ -96,16 +114,17 @@ def build_prefix(args: argparse.Namespace) -> tuple[list[str], dict[str, object]
     run(['git', 'apply', '--index', '-'], cwd=checkout, input_data=patch_bytes)
     if sha256(checkout / 'Cargo.lock') != manifest['cargo_lock_sha256']:
         raise ValueError('patched Cargo.lock differs from reviewed manifest')
-    run(['rustup', 'toolchain', 'install', manifest['rust_toolchain'], '--profile', 'minimal'])
-    run(['cargo', 'build', '--release', '--locked', '-p', 'avbroot',
+    run(['rustup', 'toolchain', 'install', manifest['rust_toolchain'], '--profile', 'minimal', '--no-self-update'])
+    cargo_program, rustc_program = pinned_compiler(environment, manifest['rust_toolchain'])
+    run([str(cargo_program), 'build', '--release', '--locked', '-p', 'avbroot',
         '--no-default-features'], cwd=checkout)
     binary = checkout / 'target' / 'release' / 'avbroot'
     digest, size = sha256(binary), binary.stat().st_size
     # Capture identities before discarding the fresh checkout and its large
     # compilation intermediates. Keep only the newly measured executable;
     # the parent still authorizes its bytes, never the generated receipt.
-    rustc = subprocess.check_output(['rustc', '-vV'], env=environment, text=True).strip()
-    cargo = subprocess.check_output(['cargo', '-V'], env=environment, text=True).strip()
+    rustc = subprocess.check_output([str(rustc_program), '-vV'], env=environment, text=True).strip()
+    cargo = subprocess.check_output([str(cargo_program), '-V'], env=environment, text=True).strip()
     retained_binary = work / 'avbroot'
     binary.replace(retained_binary)
     shutil.rmtree(checkout)
