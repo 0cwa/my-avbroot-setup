@@ -72,8 +72,8 @@ def _validate_ranges(value: str) -> None:
         previous_end = end
 
 
-def _parse_care_map(data: bytes) -> dict[str, tuple[str, str]]:
-    partitions: dict[str, tuple[str, str]] = {}
+def parse_care_map(data: bytes) -> dict[str, dict[str, str]]:
+    partitions: dict[str, dict[str, str]] = {}
     for number, raw in _length_fields(data):
         if number != 1:
             raise ValueError('unexpected top-level care_map field')
@@ -99,7 +99,7 @@ def _parse_care_map(data: bytes) -> dict[str, tuple[str, str]]:
         ):
             raise ValueError(f'invalid care_map fingerprint value: {name}')
         _validate_ranges(ranges)
-        partitions[name] = property_id, fingerprint
+        partitions[name] = dict(name=name, ranges=ranges, id=property_id, fingerprint=fingerprint)
         if len(partitions) > _MAX_PARTITIONS:
             raise ValueError('too many care_map partitions')
     if not partitions:
@@ -107,7 +107,7 @@ def _parse_care_map(data: bytes) -> dict[str, tuple[str, str]]:
     return partitions
 
 
-def read_fingerprint_identities(ota: Path) -> dict[str, tuple[str, str]]:
+def read_care_map(ota: Path) -> dict[str, dict[str, str]]:
     """Read the *unique* nonempty map, without extracting or modifying images."""
     with zipfile.ZipFile(ota, 'r') as archive:
         matches = [i for i in archive.infolist() if i.filename == 'care_map.pb']
@@ -118,7 +118,12 @@ def read_fingerprint_identities(ota: Path) -> dict[str, tuple[str, str]]:
         ):
             raise ValueError('OTA must contain exactly one bounded, nonempty care_map.pb')
         data = archive.read(matches[0])
-    return _parse_care_map(data)
+    return parse_care_map(data)
+
+
+def read_fingerprint_identities(ota: Path) -> dict[str, tuple[str, str]]:
+    return {name: (entry['id'], entry['fingerprint'])
+            for name, entry in read_care_map(ota).items()}
 
 
 def verify_fingerprint_identity_preserved(

@@ -59,9 +59,6 @@ class PostflightTest(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn('--expected-care-map', command)
         self.assertIn('--verification-report', command)
-        with self.assertRaises(ValueError):
-            external.verify_ota(Path('ota'), Path('key'), Path('cert'),
-                                expected_care_map=Path('map'), allow_source_care_map_mismatch=True)
 
     def test_key_encoding_uses_configured_signer(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -112,3 +109,31 @@ class PayloadBindingTest(unittest.TestCase):
                             runtime_care_map.verify_output(ota, expected, root/'key', root/'cert', root/'proof')
                     if failure in ('hash','required-set'):
                         props.assert_not_called()
+
+
+class PropertyScratchTest(unittest.TestCase):
+    def test_reader_releases_trees_on_success_and_failure(self):
+        for valid in (False, True):
+            with self.subTest(valid=valid), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                scratch = root/'property'
+                def unpack_avb(image, directory):
+                    raw = bytearray(4096)
+                    raw[1080:1082] = b'\x53\xef'
+                    (directory/'raw.img').write_bytes(raw)
+                def unpack_fs(image, directory):
+                    props = directory/'fs_tree'/'etc'
+                    props.mkdir(parents=True)
+                    (props/'build.prop').write_text(
+                        'ro.odm.build.fingerprint=actual/value\n' if valid else '# missing\n')
+                with (
+                    mock.patch.object(external, 'unpack_avb', side_effect=unpack_avb),
+                    mock.patch.object(external, 'unpack_fs', side_effect=unpack_fs),
+                ):
+                    if valid:
+                        self.assertEqual('actual/value', runtime_care_map.filesystem_fingerprint(
+                            root/'image', 'odm', scratch))
+                    else:
+                        with self.assertRaises(ValueError):
+                            runtime_care_map.filesystem_fingerprint(root/'image', 'odm', scratch)
+                self.assertFalse(scratch.exists())

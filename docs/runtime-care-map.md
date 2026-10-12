@@ -1,7 +1,7 @@
 # Strict runtime care-map postflight
 
-The existing `--allow-source-care-map-mismatch` option now selects strict
-runtime care-map verification. It no longer tolerates a verifier error in the
+The `--runtime-care-map` option selects strict runtime care-map verification.
+`--allow-source-care-map-mismatch` remains an equivalent compatibility alias. It no longer tolerates a verifier error in the
 production patch path. This development interface requires avbroot's
 `--expected-care-map` and `--verification-report` implementation; older
 avbroot binaries fail before patching. Both independent source trust anchors
@@ -14,6 +14,9 @@ cryptographic verifier's report before afsr reads its ext4 build property.
 The canonical Android property paths are `/system/build.prop` for system,
 `/build.prop` for vendor and `/etc/build.prop` for the other partitions.
 Unsupported filesystems and missing or duplicate properties fail closed.
+Property extraction scratch trees are removed after each read, including
+failures, and verified partition images are released before the next output.
+Only the small successful verifier reports remain for evidence.
 
 Unmodified partitions preserve authenticated sparse ranges. Replaced ext4
 partitions receive the complete final AVB-protected data extent; avbroot must

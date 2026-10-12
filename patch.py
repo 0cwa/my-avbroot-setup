@@ -131,7 +131,8 @@ def parse_args():
         help='OTA certificate for verifying input OTA',
     )
     parser.add_argument(
-        '--allow-source-care-map-mismatch',
+        '--runtime-care-map', '--allow-source-care-map-mismatch',
+        dest='allow_source_care_map_mismatch',
         action='store_true',
         help=(
             'Use filesystem-derived runtime care maps with strict expected-map '
