@@ -159,3 +159,27 @@ A provisional pre-sign proof is **not enough**. After signing, *re-extract the f
 [Worklane 4 quarantine draft](https://github.com/0cwa/ModOS/pull/121) identifies `patch_ota`'s existing `outputs_ready` fast path as potentially skipping post-patch verification of stale cached ZIPs. The offline reference oracle cannot tell whether the caller bypassed it entirely. The release-side implementation must **always** reverify reused OTA outputs immediately before publication or forbid reuse altogether. A green offline CI outcome is not acceptance of cached output safety.
 
 **No corrected avbroot code or proof-backed expected-map verifier is currently integrated.** The source pin remains empty, release quarantine in draft, and physical first-boot/OTA-persistence tests remain mandatory. No merge or OTA publication is authorized.
+
+### Reproducible original signed ext4 property-path evidence (separate from normal CI)
+
+Read-only forensic CI [38181164127, job 114593834255](https://github.com/0cwa/ModOS/actions/runs/38181164127) records the exact successfully read `debugfs` filesystem paths for **the original authenticated signed images**:
+
+| Partition | Original ext4 path | Key |
+|---|---|---|
+| `odm` | `/etc/build.prop` | `ro.odm.build.fingerprint` |
+| `product` | `/etc/build.prop` | `ro.product.build.fingerprint` |
+| `system` | `/system/build.prop` | `ro.system.build.fingerprint` |
+| `system_ext` | `/etc/build.prop` | `ro.system_ext.build.fingerprint` |
+| `vendor` | `/build.prop` | `ro.vendor.build.fingerprint` |
+| `vendor_dlkm` | `/etc/build.prop` | `ro.vendor_dlkm.build.fingerprint` |
+
+The fixture now records these paths alongside the six published payload image SHA-256s. The new optional `tests/forensics_check_partition_props.py` independently hashes **each of the six original raw images** against the pinned source hashes **before** invoking read-only `debugfs -R 'cat PATH'` (no shell). It requires exactly one matching `ro.<name>.build.fingerprint` assignment equal to the signed original care map, refusing missing, duplicate, wrong-path, non-UTF8, or AVB-only substitute values. It prints only minimal fingerprint provenance metadata; does not publish or mutate images.
+
+```bash
+uv run python -m tests.forensics_check_partition_props \
+  --original-image-dir /local/publisher-authenticated-original-partitions
+```
+
+`tests/test_care_map_signed_property_paths.py` runs the parser and six-image inspector with **mocked debugfs and tiny deterministic fake files** in ordinary offline CI. This is a unit test of exact path and fail-closed hashing/metadata logic, **not** a claim to re-extract/rehash 1.23 GB source images in CI.
+
+**Important limit:** These paths are provenance of the **original signed images**. The patcher may change final filesystem content; Worklane 1/4 must independently inspect **final signed output images** and prove actual effective boot-time properties separately. Original path consistency is not a device runtime getprop attestation.
