@@ -1,284 +1,114 @@
-# SPDX-FileCopyrightText: 2026 PixeneOS contributors
 # SPDX-License-Identifier: GPL-3.0-only
-
-"""Fail-closed checks for OTAs regenerated after a source care-map exception."""
-
+"""Postflight behavior at the authenticated tool boundary."""
 from pathlib import Path
 from types import SimpleNamespace
 import subprocess
 import tempfile
 import unittest
 from unittest import mock
-import zipfile
 
-from lib import external
-import patch as patch_script
+from lib import external, runtime_care_map
+import patch
 
 
-class SourceCareMapOutputVerificationTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-        self.primary = self.root / 'rootless.zip'
-        self.secondary = self.root / 'magisk.zip'
-        self.cert = self.root / 'output-ota.crt'
-        self.key = external.SigningKey(self.root / 'output-avb.key', 'AVB_PASS', None)
-        self.expected_key = self.root / 'expected-output-avb-pkmd.bin'
+class PostflightTest(unittest.TestCase):
+    def test_secondary_failure_prevents_assets_in_both_modes(self):
+        for runtime in (False, True):
+            with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                args = SimpleNamespace(
+                    input=root/'source.zip', output=root/'rootless.zip',
+                    secondary_output=root/'magisk.zip', patch_arg=['--rootless'],
+                    secondary_patch_arg=['--magisk'], sign_key_avb=root/'avb.key',
+                    sign_key_ota=root/'ota.key', sign_cert_ota=root/'ota.crt',
+                    verify_public_key_avb=root/'source.pk', verify_cert_ota=root/'source.crt',
+                    pass_avb_env_var=None, pass_ota_env_var=None, pass_avb_file=None,
+                    pass_ota_file=None, compatible_sepolicy=False, skip_custota_tool=False,
+                    allow_source_care_map_mismatch=runtime,
+                )
+                observed = []
+                def verifier(ota, *unused, **kwargs):
+                    observed.append(ota)
+                    if ota == args.secondary_output:
+                        raise subprocess.CalledProcessError(1, ['verify'])
+                    return {}
+                with (
+                    mock.patch.object(patch.modules, 'all_modules', return_value=[]),
+                    mock.patch.object(external, 'patch_ota'),
+                    mock.patch.object(external, 'encode_output_avb_public_key'),
+                    mock.patch.object(external, 'verify_ota', side_effect=verifier),
+                    mock.patch.object(runtime_care_map, 'verify_output', side_effect=verifier),
+                    mock.patch.object(runtime_care_map, 'read_map', return_value={}),
+                    mock.patch.object(runtime_care_map, 'write_map'),
+                    mock.patch.object(runtime_care_map, 'expected_output_map', return_value=root/'expected.pb'),
+                    mock.patch.object(external, 'generate_csig') as csig,
+                    mock.patch.object(external, 'generate_update_info') as metadata,
+                    mock.patch.object(patch, 'write_patch_report') as report,
+                    self.assertRaises(subprocess.CalledProcessError),
+                ):
+                    patch._run(args, root, None, ())
+                self.assertEqual(observed, [args.input, args.output, args.secondary_output])
+                csig.assert_not_called()
+                metadata.assert_not_called()
+                report.assert_not_called()
 
-    def _args(self, *, paired: bool = False) -> SimpleNamespace:
-        return SimpleNamespace(
-            input=self.root / 'original.zip',
-            output=self.primary,
-            patch_arg=['--rootless'],
-            secondary_output=self.secondary if paired else None,
-            secondary_patch_arg=['--magisk'] if paired else [],
-            sign_cert_ota=self.cert,
-        )
-
-    @staticmethod
-    def _write_zip(path: Path, *, map_value: bytes | None = b'valid') -> None:
-        with zipfile.ZipFile(path, 'w') as archive:
-            archive.writestr('META-INF/com/android/metadata', 'pre-device=pdx235\n')
-            if map_value is not None:
-                archive.writestr('care_map.pb', map_value)
-
-    @staticmethod
-    def _encode_fixture(unused_key: external.SigningKey, output: Path) -> None:
-        output.write_bytes(b'configured-signing-key-public-identity')
-
-    def test_derived_output_key_passed_to_strict_verifier(self) -> None:
-        self._write_zip(self.primary)
-        self._write_zip(self.secondary)
-        with (
-            mock.patch.object(
-                external, 'encode_output_avb_public_key',
-                side_effect=self._encode_fixture,
-            ) as encode,
-            mock.patch.object(external, 'verify_ota') as verify,
-            mock.patch.object(
-                patch_script.care_map_compat, 'verify_fingerprint_identity_preserved'
-            ) as fingerprint_guard,
-        ):
-            patch_script._verify_outputs_after_source_care_map_exception(
-                self._args(paired=True), self.key, self.root,
-            )
-
-        encode.assert_called_once_with(self.key, self.expected_key)
-        self.assertEqual([
-            mock.call(self.primary, self.expected_key, self.cert),
-            mock.call(self.secondary, self.expected_key, self.cert),
-        ], verify.call_args_list)
-        for call in verify.call_args_list:
-            self.assertNotIn('allow_source_care_map_mismatch', call.kwargs)
-        self.assertEqual([
-            mock.call(self.root / 'original.zip', self.primary),
-            mock.call(self.root / 'original.zip', self.secondary),
-        ], fingerprint_guard.call_args_list)
-
-    def test_missing_care_map_is_rejected_without_verification(self) -> None:
-        self._write_zip(self.primary, map_value=None)
-        with (
-            mock.patch.object(
-                external, 'encode_output_avb_public_key',
-                side_effect=self._encode_fixture,
-            ),
-            mock.patch.object(external, 'verify_ota') as verify,
-            self.assertRaisesRegex(RuntimeError, 'care_map.pb'),
-        ):
-            patch_script._verify_outputs_after_source_care_map_exception(
-                self._args(), self.key, self.root,
-            )
-        verify.assert_not_called()
-
-    def test_empty_care_map_is_rejected(self) -> None:
-        self._write_zip(self.primary, map_value=b'')
-        with (
-            mock.patch.object(
-                external, 'encode_output_avb_public_key',
-                side_effect=self._encode_fixture,
-            ),
-            mock.patch.object(external, 'verify_ota') as verify,
-            self.assertRaisesRegex(RuntimeError, 'care_map.pb'),
-        ):
-            patch_script._verify_outputs_after_source_care_map_exception(
-                self._args(), self.key, self.root,
-            )
-        verify.assert_not_called()
-
-    def test_output_wrong_avb_signer_fails_strict_verification(self) -> None:
-        self._write_zip(self.primary)
-        with (
-            mock.patch.object(
-                external, 'encode_output_avb_public_key',
-                side_effect=self._encode_fixture,
-            ),
-            mock.patch.object(
-                external, 'verify_ota',
-                side_effect=subprocess.CalledProcessError(1, ['avbroot', 'ota', 'verify']),
-            ) as verify,
-            self.assertRaises(subprocess.CalledProcessError),
-        ):
-            patch_script._verify_outputs_after_source_care_map_exception(
-                self._args(), self.key, self.root,
-            )
-        verify.assert_called_once_with(self.primary, self.expected_key, self.cert)
-
-    def test_wrong_output_ota_certificate_fails_strict_verification(self) -> None:
-        self._write_zip(self.primary)
-        with (
-            mock.patch.object(
-                external, 'encode_output_avb_public_key',
-                side_effect=self._encode_fixture,
-            ),
-            mock.patch.object(
-                external, 'verify_ota',
-                side_effect=subprocess.CalledProcessError(1, ['avbroot', 'ota', 'verify']),
-            ) as verify,
-            self.assertRaises(subprocess.CalledProcessError),
-        ):
-            patch_script._verify_outputs_after_source_care_map_exception(
-                self._args(), self.key, self.root,
-            )
-        verify.assert_called_once_with(self.primary, self.expected_key, self.cert)
-
-    def test_duplicate_care_maps_are_rejected_before_verification(self) -> None:
-        self._write_zip(self.primary)
-        with zipfile.ZipFile(self.primary, 'a') as archive:
-            archive.writestr('care_map.pb', b'second-copy')
-        with (
-            mock.patch.object(
-                external, 'encode_output_avb_public_key',
-                side_effect=self._encode_fixture,
-            ),
-            mock.patch.object(external, 'verify_ota') as verify,
-            self.assertRaisesRegex(RuntimeError, 'unique, nonempty'),
-        ):
-            patch_script._verify_outputs_after_source_care_map_exception(
-                self._args(), self.key, self.root,
-            )
-        verify.assert_not_called()
-
-    def test_secondary_verification_failure_precedes_any_sidecars(self) -> None:
-        args = self._args(paired=True)
-        args.input = self.root / 'original.zip'
-        args.verify_public_key_avb = self.root / 'original-pkmd.bin'
-        args.verify_cert_ota = self.root / 'original-ota.crt'
-        args.sign_key_avb = self.key.key
-        args.sign_key_ota = self.root / 'output-ota.key'
-        args.pass_avb_env_var = 'AVB_PASS'
-        args.pass_ota_env_var = None
-        args.pass_avb_file = None
-        args.pass_ota_file = None
-        args.skip_custota_tool = True
-        args.compatible_sepolicy = False
-        args.allow_source_care_map_mismatch = True
-
-        def patch_outputs(*unused) -> None:
-            self._write_zip(self.primary)
-            self._write_zip(self.secondary)
-
-        def verify_ota(ota, *_args, **_kwargs) -> bool:
-            if ota == self.secondary:
-                raise subprocess.CalledProcessError(1, ['avbroot', 'ota', 'verify'])
-            return ota == args.input
-
-        with (
-            mock.patch.object(patch_script.modules, 'all_modules', return_value=[]),
-            mock.patch.object(patch_script, '_patch_ota_outputs',
-                              side_effect=patch_outputs) as patch_outputs_call,
-            mock.patch.object(external, 'verify_ota',
-                              side_effect=verify_ota) as verify,
-            mock.patch.object(external, 'encode_output_avb_public_key',
-                              side_effect=self._encode_fixture),
-            mock.patch.object(
-                patch_script.care_map_compat, 'verify_fingerprint_identity_preserved'
-            ) as fingerprint_guard,
-            mock.patch.object(external, 'generate_csig') as csig,
-            mock.patch.object(external, 'generate_update_info') as metadata,
-            mock.patch.object(patch_script, 'write_patch_report') as report,
-            self.assertRaises(subprocess.CalledProcessError),
-        ):
-            patch_script._run(args, self.root, None, ())
-
-        patch_outputs_call.assert_called_once()
-        self.assertEqual(3, verify.call_count)  # source, primary, secondary
-        fingerprint_guard.assert_called_once_with(args.input, self.primary)
-        csig.assert_not_called()
-        metadata.assert_not_called()
-        report.assert_not_called()
-
-    def test_secondary_identity_drift_blocks_sidecars_and_report(self) -> None:
-        args = self._args(paired=True)
-        args.verify_public_key_avb = self.root / 'source-pkmd.bin'
-        args.verify_cert_ota = self.root / 'source-ota.crt'
-        args.sign_key_avb = self.key.key
-        args.sign_key_ota = self.root / 'output-ota.key'
-        args.pass_avb_env_var = 'AVB_PASS'
-        args.pass_ota_env_var = None
-        args.pass_avb_file = None
-        args.pass_ota_file = None
-        args.skip_custota_tool = False
-        args.compatible_sepolicy = False
-        args.allow_source_care_map_mismatch = True
-
-        def patch_outputs(*unused) -> None:
-            self._write_zip(self.primary)
-            self._write_zip(self.secondary)
-
-        def check_identity(source: Path, output: Path) -> None:
-            self.assertEqual(args.input, source)
-            if output == self.secondary:
-                raise RuntimeError('regenerated care_map.pb changes runtime fingerprint')
-
-        with (
-            mock.patch.object(patch_script.modules, 'all_modules', return_value=[]),
-            mock.patch.object(patch_script, '_patch_ota_outputs',
-                              side_effect=patch_outputs) as patch_outputs_call,
-            mock.patch.object(external, 'verify_ota',
-                              side_effect=lambda ota, *_a, **_k: ota == args.input) as verify,
-            mock.patch.object(external, 'encode_output_avb_public_key',
-                              side_effect=self._encode_fixture),
-            mock.patch.object(
-                patch_script.care_map_compat, 'verify_fingerprint_identity_preserved',
-                side_effect=check_identity,
-            ) as fingerprint_guard,
-            mock.patch.object(external, 'generate_csig') as csig,
-            mock.patch.object(external, 'generate_update_info') as metadata,
-            mock.patch.object(patch_script, 'write_patch_report') as report,
-            self.assertRaisesRegex(RuntimeError, 'runtime fingerprint'),
-        ):
-            patch_script._run(args, self.root, None, ())
-
-        patch_outputs_call.assert_called_once()
-        self.assertEqual(3, verify.call_count)
-        self.assertEqual([
-            mock.call(args.input, self.primary),
-            mock.call(args.input, self.secondary),
-        ], fingerprint_guard.call_args_list)
-        csig.assert_not_called()
-        metadata.assert_not_called()
-        report.assert_not_called()
-
-    def test_output_key_encoding_uses_signing_passphrase_and_no_shell(self) -> None:
-        with (
-            mock.patch.object(external, '_run_command',
-                              side_effect=lambda args: self.expected_key.write_bytes(b'pkmd')) as run,
-        ):
-            external.encode_output_avb_public_key(self.key, self.expected_key)
+    def test_strict_expected_map_never_uses_error_waiver(self):
+        with mock.patch.object(external, '_run_command') as run:
+            external.verify_ota(Path('ota'), Path('key'), Path('cert'),
+                                expected_care_map=Path('map'), verification_report=Path('report'))
         command = run.call_args.args[0]
-        self.assertEqual(command[:3], ['avbroot', 'key', 'encode-avb'])
-        self.assertEqual(command[command.index('--key') + 1], self.key.key)
-        self.assertEqual(command[command.index('--output') + 1], self.expected_key)
-        self.assertEqual(command[command.index('--pass-env-var') + 1], 'AVB_PASS')
+        self.assertIn('--expected-care-map', command)
+        self.assertIn('--verification-report', command)
+        with self.assertRaises(ValueError):
+            external.verify_ota(Path('ota'), Path('key'), Path('cert'),
+                                expected_care_map=Path('map'), allow_source_care_map_mismatch=True)
 
-    def test_missing_derived_key_fails_closed(self) -> None:
-        with (
-            mock.patch.object(external, '_run_command'),
-            self.assertRaisesRegex(RuntimeError, 'nonempty output AVB public key'),
-        ):
-            external.encode_output_avb_public_key(self.key, self.expected_key)
+    def test_key_encoding_uses_configured_signer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)/'expected.pk'
+            key = external.SigningKey(Path('sign.key'), 'AVB_PASS', None)
+            with mock.patch.object(external, '_run_command',
+                                   side_effect=lambda args: output.write_bytes(b'pk')) as run:
+                external.encode_output_avb_public_key(key, output)
+            command = run.call_args.args[0]
+            self.assertEqual(command[command.index('--key')+1], key.key)
+            self.assertEqual(command[command.index('--pass-env-var')+1], 'AVB_PASS')
 
 
-if __name__ == '__main__':
-    unittest.main()
+class PayloadBindingTest(unittest.TestCase):
+    def test_extracted_bytes_and_runtime_property_are_bound(self):
+        import hashlib
+        import json
+        import zipfile
+        for failure in ('hash', 'property', 'required-set', None):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                ota = root/'ota.zip'
+                expected = root/'expected.pb'
+                entry = dict(name='odm', ranges='2,0,1', id='ro.odm.build.fingerprint', fingerprint='correct/value')
+                runtime_care_map.write_map({'odm':entry}, expected)
+                with zipfile.ZipFile(ota, 'w') as archive:
+                    archive.writestr('care_map.pb', expected.read_bytes())
+                image = b'protected-data'.ljust(4096, b'\0')
+                def verified(*args, verification_report, **kwargs):
+                    verification_report.write_text(json.dumps(dict(
+                        schema='avbroot-ota-verification-v1',
+                        required_care_map_partitions=[] if failure == 'required-set' else ['odm'],
+                        partitions=[dict(name='odm', image_size=len(image),
+                            image_sha256=hashlib.sha256(image).hexdigest(), verity_data_size=4096)])))
+                def extract(unused, images, partitions):
+                    images.mkdir()
+                    (images/'odm.img').write_bytes(image if failure != 'hash' else b'wrong'.ljust(4096,b'\0'))
+                with (
+                    mock.patch.object(external, 'verify_ota', side_effect=verified),
+                    mock.patch.object(external, 'unpack_ota', side_effect=extract),
+                    mock.patch.object(runtime_care_map, 'filesystem_fingerprint',
+                        return_value='wrong/value' if failure == 'property' else 'correct/value') as props,
+                ):
+                    if failure is None:
+                        runtime_care_map.verify_output(ota, expected, root/'key', root/'cert', root/'proof')
+                    else:
+                        with self.assertRaises(ValueError):
+                            runtime_care_map.verify_output(ota, expected, root/'key', root/'cert', root/'proof')
+                    if failure in ('hash','required-set'):
+                        props.assert_not_called()

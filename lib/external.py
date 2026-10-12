@@ -271,6 +271,8 @@ def verify_ota(
     cert_ota: Path | None,
     *,
     allow_source_care_map_mismatch: bool = False,
+    expected_care_map: Path | None = None,
+    verification_report: Path | None = None,
 ) -> bool:
     """Verify OTA; return True only for a fully checked care-map-only mismatch.
 
@@ -291,6 +293,13 @@ def verify_ota(
     if cert_ota:
         cmd.append('--cert-ota')
         cmd.append(cert_ota)
+
+    if expected_care_map is not None:
+        if allow_source_care_map_mismatch:
+            raise ValueError('expected care map cannot use a compatibility waiver')
+        cmd.extend(('--expected-care-map', expected_care_map))
+    if verification_report is not None:
+        cmd.extend(('--verification-report', verification_report))
 
     if not allow_source_care_map_mismatch:
         _run_command(cmd)

@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 import tomlkit
 
-from lib import care_map_compat, external, modules
+from lib import external, modules, runtime_care_map
 from lib import filesystem
 from lib.filesystem import CpioFs, CpioInfo, ExtFs, ExtInfo
 from lib.modules.registry import (
@@ -134,8 +134,8 @@ def parse_args():
         '--allow-source-care-map-mismatch',
         action='store_true',
         help=(
-            'For a known signed upstream OTA, tolerate ONLY avbroot 3.34.1 '
-            'source care-map drift after all other checks pass; strictly '
+            'Use filesystem-derived runtime care maps with strict expected-map '
+            'verification for source and final signed outputs; '
             'verify each rebuilt OTA before generating publication assets'
         ),
     )
@@ -326,39 +326,6 @@ def _patch_ota_outputs(
 
 
 
-def _verify_outputs_after_source_care_map_exception(
-    args: argparse.Namespace,
-    sign_key_avb: external.SigningKey,
-    temp_dir: Path,
-) -> None:
-    """No compatibility exception is ever allowed on regenerated OTA outputs.
-
-    Pin the expected output OTA certificate AND the AVB public key derived
-    from the configured output signing key. Check every output (including a
-    secondary Magisk OTA) before creating any publication sidecars or report.
-    """
-    public_key_avb = temp_dir / 'expected-output-avb-pkmd.bin'
-    external.encode_output_avb_public_key(sign_key_avb, public_key_avb)
-
-    for output, _ in _patch_output_plans(args):
-        with zipfile.ZipFile(output) as archive:
-            if (
-                archive.namelist().count('care_map.pb') != 1
-                or archive.getinfo('care_map.pb').file_size == 0
-            ):
-                raise RuntimeError(
-                    'patched OTA has no unique, nonempty rebuilt care_map.pb: '
-                    f'{output}'
-                )
-        external.verify_ota(output, public_key_avb, args.sign_cert_ota)
-        # Cryptographic validity alone is insufficient: Android's
-        # update_verifier skips care-map partitions if their fingerprints
-        # differ from runtime build properties. Compare identities against
-        # the independently authenticated source map; a future intentional
-        # fingerprint change requires explicit new review.
-        care_map_compat.verify_fingerprint_identity_preserved(args.input, output)
-
-
 def _run(
     args: argparse.Namespace,
     temp_dir: Path,
@@ -415,19 +382,19 @@ def _run(
         if args.compatible_sepolicy:
             need_ext_fs.add('odm')
 
-    # Always authenticate the original signed OTA before extraction.
-    # Some official LineageOS OTAs have AOSP sparse ranges and OEM build.prop
-    # fingerprints, while avbroot 3.34.1 derives the care map from AVB props.
-    # A precise, single care-map-only mismatch may be accepted only when the
-    # caller explicitly opts in and all other source checks pass.
-    source_care_map_mismatch = external.verify_ota(
-        args.input,
-        args.verify_public_key_avb,
-        args.verify_cert_ota,
-        allow_source_care_map_mismatch=getattr(
-            args, 'allow_source_care_map_mismatch', False
-        ),
-    )
+    # Runtime-map mode uses a strict reviewed expected-map verifier. No
+    # verifier error or log pattern is accepted as authentication evidence.
+    runtime_map = getattr(args, 'allow_source_care_map_mismatch', False)
+    source_entries = None
+    if runtime_map:
+        source_expected = temp_dir / 'source-expected.pb'
+        runtime_care_map.write_map(runtime_care_map.read_map(args.input), source_expected)
+        source_entries = runtime_care_map.verify_output(
+            args.input, source_expected, args.verify_public_key_avb,
+            args.verify_cert_ota, temp_dir / 'source-proof',
+        )
+    else:
+        external.verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
 
     # Unpack OTA.
     images_dir = temp_dir / 'images'
@@ -572,17 +539,31 @@ def _run(
         name: images_dir / f'{name}.img'
         for name in boot_fs | ext_fs
     }
-    _patch_ota_outputs(
-        args,
-        sign_key_avb,
-        sign_key_ota,
-        replacements,
-    )
-
-    if source_care_map_mismatch:
-        _verify_outputs_after_source_care_map_exception(
-            args, sign_key_avb, temp_dir,
+    expected_output = None
+    if runtime_map:
+        expected_output = runtime_care_map.expected_output_map(
+            source_entries, replacements, temp_dir / 'output-map',
         )
+        for output, patch_args in _patch_output_plans(args):
+            external.patch_ota(
+                args.input, output, sign_key_avb, sign_key_ota,
+                args.sign_cert_ota, replacements,
+                [*patch_args, '--expected-care-map', str(expected_output)],
+            )
+    else:
+        _patch_ota_outputs(args, sign_key_avb, sign_key_ota, replacements)
+
+    # Both final signed payloads must pass before any sidecar or success report.
+    public_key_avb = temp_dir / 'expected-output-avb-pkmd.bin'
+    external.encode_output_avb_public_key(sign_key_avb, public_key_avb)
+    for index, (output, _) in enumerate(_patch_output_plans(args)):
+        if runtime_map:
+            runtime_care_map.verify_output(
+                output, expected_output, public_key_avb, args.sign_cert_ota,
+                temp_dir / f'output-proof-{index}',
+            )
+        else:
+            external.verify_ota(output, public_key_avb, args.sign_cert_ota)
 
     if not args.skip_custota_tool:
         # Generate Custota csig.
