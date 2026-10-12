@@ -99,43 +99,55 @@ class DevelopmentRunnerTests(unittest.TestCase):
         if not (MODOS / 'src' / 'bootstrap_archive.py').is_file():
             self.skipTest('ModOS bootstrap source required for Linux memfd integration')
         builder = load('build_and_run')
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory) / 'fresh-build'
-            lock = b'reviewed lock bytes'
-            manifest = {'repository': 'https://github.com/chenxiaolong/avbroot.git',
-                        'base_commit': '1' * 40, 'rust_toolchain': '1.99.0',
-                        'cargo_lock_sha256': hashlib.sha256(lock).hexdigest()}
-            args = argparse.Namespace(modos_repo=MODOS, build_workdir=work,
-                bootstrap_workdir=work, cargo_home=None, rustup_home=None)
+        for supplied_cargo, supplied_rustup in ((False, False), (True, False), (False, True), (True, True), ('shared', False)):
+            with tempfile.TemporaryDirectory() as directory:
+                work = Path(directory) / 'fresh-build'
+                lock = b'reviewed lock bytes'
+                manifest = {'repository': 'https://github.com/chenxiaolong/avbroot.git',
+                            'base_commit': '1' * 40, 'rust_toolchain': '1.99.0',
+                            'cargo_lock_sha256': hashlib.sha256(lock).hexdigest()}
+                explicit_cargo = ((work / 'rustup-home' / 'caller-cargo') if supplied_cargo == 'shared'
+                                  else Path(directory) / 'caller-cargo') if supplied_cargo else None
+                explicit_rustup = Path(directory) / 'caller-rustup' if supplied_rustup else None
+                args = argparse.Namespace(modos_repo=MODOS, build_workdir=work,
+                    bootstrap_workdir=work, cargo_home=explicit_cargo, rustup_home=explicit_rustup)
 
-            # Replace compilation only: cleanup and the retained executable's
-            # actual sealed execution remain real, without another Rust build.
-            def compile_step(command, **kwargs):
-                if command[:2] == ['git', 'clone']:
-                    checkout = Path(command[-1])
-                    (checkout / '.git').mkdir(parents=True)
-                    (checkout / 'Cargo.lock').write_bytes(lock)
-                elif Path(command[0]).name == 'cargo' and command[1] == 'build':
-                    target = kwargs['cwd'] / 'target' / 'release'
-                    target.mkdir(parents=True)
-                    shutil.copyfile('/bin/echo', target / 'avbroot')
-                    (target / 'discard-me').write_bytes(b'compilation intermediate')
+                # Replace compilation only: cleanup and the retained executable's
+                # actual sealed execution remain real, without another Rust build.
+                def compile_step(command, **kwargs):
+                    for key in ('CARGO_HOME', 'RUSTUP_HOME'):
+                        (Path(kwargs['env'][key]) / 'retained-cache-marker').write_bytes(b'compiler cache')
+                    if command[:2] == ['git', 'clone']:
+                        checkout = Path(command[-1])
+                        (checkout / '.git').mkdir(parents=True)
+                        (checkout / 'Cargo.lock').write_bytes(lock)
+                    elif Path(command[0]).name == 'cargo' and command[1] == 'build':
+                        target = kwargs['cwd'] / 'target' / 'release'
+                        target.mkdir(parents=True)
+                        shutil.copyfile('/bin/echo', target / 'avbroot')
+                        (target / 'discard-me').write_bytes(b'compilation intermediate')
 
-            with mock.patch.object(builder, 'load_source', return_value=(manifest, b'patch', 'reviewed')), \
-                 mock.patch.object(builder, 'require_clean'), \
-                 mock.patch.object(builder.subprocess, 'run', side_effect=compile_step), \
-                 mock.patch.object(builder, 'pinned_compiler', return_value=(Path('/pinned/cargo'), Path('/pinned/rustc'))), \
-                 mock.patch.object(builder.subprocess, 'check_output', side_effect=['rustc provenance', 'cargo provenance']):
-                prefix, receipt = builder.build_prefix(args)
-            binary = work / 'avbroot'
-            self.assertFalse((work / 'source').exists())
-            self.assertTrue((work / 'build-receipt.json').is_file())
-            self.assertEqual(receipt['binary_sha256'], hashlib.sha256(binary.read_bytes()).hexdigest())
-            self.assertEqual(prefix[prefix.index('--built-binary') + 1], str(binary))
-            accepted = subprocess.run([*prefix, 'avbroot', '--', 'retained bytes'],
-                                      capture_output=True, text=True)
-            self.assertEqual(accepted.returncode, 0, accepted.stderr)
-            self.assertEqual(accepted.stdout.strip(), 'retained bytes')
+                with mock.patch.object(builder, 'load_source', return_value=(manifest, b'patch', 'reviewed')), \
+                     mock.patch.object(builder, 'require_clean'), \
+                     mock.patch.object(builder.subprocess, 'run', side_effect=compile_step), \
+                     mock.patch.object(builder, 'pinned_compiler', return_value=(Path('/pinned/cargo'), Path('/pinned/rustc'))), \
+                     mock.patch.object(builder.subprocess, 'check_output', side_effect=['rustc provenance', 'cargo provenance']):
+                    prefix, receipt = builder.build_prefix(args)
+                binary = work / 'avbroot'
+                self.assertFalse((work / 'source').exists())
+                for explicit, name in ((explicit_cargo, 'cargo-home'), (explicit_rustup, 'rustup-home')):
+                    if explicit is None:
+                        retained_for_caller = supplied_cargo == 'shared' and name == 'rustup-home'
+                        self.assertEqual((work / name).exists(), retained_for_caller)
+                    else:
+                        self.assertEqual((explicit / 'retained-cache-marker').read_bytes(), b'compiler cache')
+                self.assertTrue((work / 'build-receipt.json').is_file())
+                self.assertEqual(receipt['binary_sha256'], hashlib.sha256(binary.read_bytes()).hexdigest())
+                self.assertEqual(prefix[prefix.index('--built-binary') + 1], str(binary))
+                accepted = subprocess.run([*prefix, 'avbroot', '--', 'retained bytes'],
+                                          capture_output=True, text=True)
+                self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                self.assertEqual(accepted.stdout.strip(), 'retained bytes')
 
     def test_build_scripts_receive_no_signing_secrets_or_compiler_overrides(self):
         builder = load('build_and_run')

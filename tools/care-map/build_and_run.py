@@ -128,6 +128,14 @@ def build_prefix(args: argparse.Namespace) -> tuple[list[str], dict[str, object]
     retained_binary = work / 'avbroot'
     binary.replace(retained_binary)
     shutil.rmtree(checkout)
+    # Default homes belong to this fresh build and are unused during OTA
+    # processing. Explicit caller homes remain available to their owner.
+    explicit_homes = [path.resolve() for path in (args.cargo_home, args.rustup_home)
+                      if path is not None]
+    for home, supplied in ((cargo_home, args.cargo_home), (rustup_home, args.rustup_home)):
+        if supplied is None and not any(home == explicit or home in explicit.parents
+                                        for explicit in explicit_homes):
+            shutil.rmtree(home)
     prefix = ['/usr/bin/python3', str(DIRECTORY / 'dev_tool_runner.py'),
         '--modos-repo', str(modos), '--bootstrap-workdir', str(args.bootstrap_workdir.resolve()),
         '--built-binary', str(retained_binary), '--built-sha256', digest, '--built-size', str(size)]
