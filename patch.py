@@ -375,6 +375,8 @@ def _run(
         need_ext_fs |= requirements.ext_images
         need_sepolicies |= requirements.selinux_patching
 
+    repack_ext_fs = set(need_ext_fs)
+
     # If we're messing with any ext filesystems, then we need to load the system
     # images to get the list of SELinux contexts.
     if need_ext_fs:
@@ -385,8 +387,10 @@ def _run(
     if need_sepolicies:
         need_boot_fs.add('vendor_boot')
         need_ext_fs.add('vendor')
+        repack_ext_fs.add('vendor')
         if args.compatible_sepolicy:
             need_ext_fs.add('odm')
+            repack_ext_fs.add('odm')
 
     # Runtime-map mode uses a strict reviewed expected-map verifier. No
     # verifier error or log pattern is accepted as authentication evidence.
@@ -517,8 +521,16 @@ def _run(
         else None
     )
 
-    # Repack ext filesystem images.
-    for name, fs in ext_fs.items():
+    # A filesystem loaded solely for label lookup is read-only preparation,
+    # and must not be repacked or become a replacement image.
+    for name in need_ext_fs - repack_ext_fs:
+        paths = ExtImagePaths(images_dir, temp_dir, name)
+        shutil.rmtree(paths.unpacked)
+        paths.image.unlink()
+
+    # Repack only filesystems declared as mutation targets by the modules.
+    for name in repack_ext_fs:
+        fs = ext_fs[name]
         paths = ExtImagePaths(images_dir, temp_dir, name)
 
         with open(paths.metadata, 'w') as f:
@@ -545,7 +557,7 @@ def _run(
     # extraction, module injection, filesystem repacking, and AVB repacking work.
     replacements = {
         name: images_dir / f'{name}.img'
-        for name in boot_fs | ext_fs
+        for name in set(boot_fs) | repack_ext_fs
     }
     expected_output = None
     if runtime_map:
