@@ -108,3 +108,54 @@ The separately provisioned **LineageOS publisher public key** must SHA-256 to pi
 5. In a **nonpublishing** full-OTA run reproduce source v3.34.1 mismatch with the exact independently authenticated source; rerun corrected strict output verification against real outputs. Follow with dm-verity/snapuserd/first-boot \`update_verifier\` and subsequent OTA-persistence testing on physical pdx235 before any merge or release authorization.
 
 **None of these tests fills or enables the production source exception SHA-256, merges a PR, or authorizes release.**
+
+
+## 2026-10-12 addendum — Worklane 1 provenance-preservation proof
+
+[Worklane 1 RFC (test-independent)](https://github.com/0cwa/my-avbroot-setup/pull/11) proposes a **strictly narrower and more useful** algorithm than regenerating sparse ranges from a nonexistent target-files sparse container: retain the independently authenticated original sparse ranges \`S_p\` only if **every 4096-byte protected block changed from the original signed image to the final signed output** belongs to those ranges, \`D_p ⊆ S_p\`. The final source and output data extents, AVB footer original-image sizes, and hashtree data sizes must agree; image layout must be preserved. This does NOT prove runtime behavior on physical hardware.
+
+**New independent test files:**
+
+- \`tests/care_map_provenance_reference.py\` — test-only block-difference/manifest-digest/range/fingerprint oracle. It compares **every** protected block, including holes, and checks a complete six-partition candidate map against independently parsed source content. It requires SHA-256 and whole-image size from **separately verified signed manifests**, matching source/final hashtree and AVB-footer original-image extents, ext4-only scope, and property identities read from the source/final filesystems. The data structure models externally attested evidence; the module **does not** cryptographically verify manifests, extract filesystem props, or perform real AVB verification.
+- \`tests/test_care_map_preservation.py\` — deterministic, entirely synthetic images of ten 4096-byte blocks each, eight protected data blocks plus two trailer blocks. Includes all six original partition names and sparse holes, mutation inside/outside care ranges, altered data/trailer without authenticated hash updates, source/output image size mismatch, AVB footer/hashtree extent drift, property substitution, missing/duplicate partitions, invalid source/candidate maps, changed map fingerprints or ranges, and non-ext4 filesystem rejection. The synthetic images are **not** source OTA filesystem bytes and their digests are **not** signed release digests.
+- \`tests/test_care_map_provenance_candidate_contract.py\` — **opt-in** Worklane 1 provenance-aware candidate integration (separate from the original AOSP synthetic-sparse-range candidate interface). Missing candidate is an explicit skip in normal CI and a hard failure with \`CARE_MAP_PROVENANCE_REQUIRED=1\`. Do not wire this to an adapter that simply calls the reference oracle.
+  
+### Worklane 1 test-only provenance candidate contract: \`modos-care-map-provenance-v1\`
+
+Configure a standalone test adapter that accepts one JSON object on stdin, writes one JSON response on stdout for positive cases, and exits nonzero for invalid cases; no shell expansion, signing, OTA publication, network, or filesystem mutation. Set:
+\`\`\`bash
+CARE_MAP_PROVENANCE_REQUIRED=1 \
+CARE_MAP_PROVENANCE_CMD='/path/to/worklane1-independent-test-adapter' \
+uv run python -m unittest tests.test_care_map_provenance_candidate_contract -v
+\`\`\`
+The request schema is \`modos-care-map-provenance-v1\`: \`block_size=4096\`, \`source_care_map_b64\`, \`candidate_output_care_map_b64\`, \`source_care_map_sha256\`, two complete manifest dynamic-partition name arrays, and \`partitions\` containing one record per name. Each record carries test-only \`source_image_b64\` / \`output_image_b64\`, their \`{source,output}_manifest_sha256\` and \`{source,output}_manifest_size\`, \`{source,output}_hashtree_image_size\`, \`{source,output}_footer_original_size\`, filesystem type, property ID and value. The adapter must check the **entire** candidate map, hashes, image layouts, property IDs/values, and all protected changed blocks. The successful response includes \`source_care_map_sha256\`, \`candidate_care_map_matches_source_semantics=true\`, and sorted \`partitions\` with each source/final SHA-256 and byte size, protected extent sizes, \`property_id\`, source/output fingerprints, unchanged \`ranges\`, and \`changed_protected_blocks\`. \`tests/test_care_map_provenance_candidate_contract.py\` provides the exact JSON codec and assertions.
+
+This is a **test harness exchange format**, not a recommended production verification interface. In a genuine production verifier, expected source/final manifest hashes must be derived exclusively from independently signature-verified payload manifests and the exact authenticated source member, **never** accepted as caller-supplied authority. The test-only use of synthetic digest fields cannot attest signer identity.
+
+### Additional positive and negative proof matrix
+
+| Proof input / mutation | Reference result | Real candidate status |
+|---|---|---|
+| Six complete unchanged synthetic images and source map | PASS, zero protected changes | Candidate not yet wired |
+| One changed protected block inside each authenticated care range | PASS, changes counted per partition | Candidate not yet wired |
+| Changed appended AVB/footer/test trailer with final image digest updated | PASS **only for the conditional data-range proof**; separate cryptographic verification still mandatory | Candidate not yet wired |
+| Changed protected sparse hole, including newly allocated/zeroed hole | **FAIL** even if revised image digest is syntactically supplied | Candidate not yet wired |
+| Changed data or appended trailer with stale final signed-manifest digest | **FAIL** | Candidate not yet wired |
+| Wrong original digest, source map hash, missing final digest, different full image size | **FAIL** | Candidate not yet wired |
+| Inconsistent source/final AVB original size, hashtree data extent, or 4096-byte alignment | **FAIL** | Candidate not yet wired |
+| Wrong/missing source/final ext4 property ID or fingerprint, AVB substituted for runtime prop | **FAIL** | Candidate not yet wired |
+| Missing/duplicate/extra manifest partitions; missing map entry | **FAIL** | Candidate not yet wired |
+| Output map ranges widened/narrowed or altered identities, even if changed blocks inside original care ranges | **FAIL** | Candidate not yet wired |
+| Same records reordered with unchanged all IDs/fingerprints/ranges | PASS semantic equivalence | Candidate not yet wired |
+| Non-ext4 or unknown filesystem type | **FAIL** | Candidate not yet wired |
+| Previously cached signed output reused without *fresh* complete post-sign verification | **NOT ATTESTABLE** by offline oracle; release-side fail-closed guard required | Worklane 4 blocker |
+
+**Distinct from initial suite:** the original AOSP reference tests verify what *sparse RAW/FILL/DONT_CARE generation* means when an original sparse chunk map is available. The new preservation tests verify the conservative **reuse of authenticated sparse ranges** when only expanded raw signed images and their signed payload metadata are available. These are not interchangeable algorithms. A filesystem allocation map is not a substitute for authenticated sparse chunk provenance.
+
+### New release-side requirement: post-sign and cached-output freshness
+
+A provisional pre-sign proof is **not enough**. After signing, *re-extract the final output images from the independently authenticated output OTA* and repeat the exact manifest SHA/size, footer/hashtree extent, filesystem property, and \`D_p ⊆ S_p\` proof; independently compare its entire signed care-map protobuf to the computed map. The configured output signer, payload signatures and partition hashes, AVB chain, recovery certificate, and policy flags still need separate strict verification. All checks must run for **both** rootless and Magisk outputs.
+
+[Worklane 4 quarantine draft](https://github.com/0cwa/ModOS/pull/121) identifies \`patch_ota\`'s existing \`outputs_ready\` fast path as potentially skipping post-patch verification of stale cached ZIPs. The offline reference oracle cannot tell whether the caller bypassed it entirely. The release-side implementation must **always** reverify reused OTA outputs immediately before publication or forbid reuse altogether. A green offline CI outcome is not acceptance of cached output safety.
+
+**No corrected avbroot code or proof-backed expected-map verifier is currently integrated.** The source pin remains empty, release quarantine in draft, and physical first-boot/OTA-persistence tests remain mandatory. No merge or OTA publication is authorized.
