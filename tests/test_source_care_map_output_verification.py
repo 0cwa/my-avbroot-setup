@@ -117,17 +117,16 @@ class PropertyScratchTest(unittest.TestCase):
             with self.subTest(valid=valid), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 scratch = root/'property'
-                def unpack_avb(image, directory):
-                    raw = bytearray(4096)
-                    raw[1080:1082] = b'\x53\xef'
-                    (directory/'raw.img').write_bytes(raw)
+                image = root/'image'
+                raw = bytearray(4096)
+                raw[1080:1082] = b'\x53\xef'
+                image.write_bytes(raw)
                 def unpack_fs(image, directory):
                     props = directory/'fs_tree'/'etc'
                     props.mkdir(parents=True)
                     (props/'build.prop').write_text(
                         'ro.odm.build.fingerprint=actual/value\n' if valid else '# missing\n')
                 with (
-                    mock.patch.object(external, 'unpack_avb', side_effect=unpack_avb),
                     mock.patch.object(external, 'unpack_fs', side_effect=unpack_fs),
                 ):
                     if valid:

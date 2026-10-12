@@ -315,13 +315,14 @@ def patch_ota(
     _run_command(cmd)
 
 
-def unpack_avb(image: Path, output_dir: Path):
+def unpack_avb(image: Path, output_dir: Path, *, metadata_only: bool = False):
     logger.info(f'Unpacking AVB image: {image}')
 
     _run_command([
         'avbroot', 'avb', 'unpack',
         '--quiet',
         '--input', image.absolute(),
+        *(['--no-output-raw'] if metadata_only else []),
     ], cwd=output_dir)
 
 
