@@ -456,7 +456,7 @@ def _run(
         for partition_name, fs in ext_fs.items():
             partition_contexts_file = (
                 fs.tree
-                / partition_name
+                / ('system' if partition_name == 'system' else '')
                 / 'etc'
                 / 'selinux'
                 / f'{partition_name}_file_contexts'

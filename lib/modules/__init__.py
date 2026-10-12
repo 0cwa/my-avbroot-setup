@@ -133,10 +133,9 @@ def append_seapp_contexts(
                 continue
 
             partition_fs = ext_fs[partition_name]
-            seapp_file = f'{partition_name}/etc/selinux/{partition_name}_seapp_contexts'
+            seapp_file = f'etc/selinux/{partition_name}_seapp_contexts'
             seapp_path = (
                 partition_fs.tree
-                / partition_name
                 / 'etc'
                 / 'selinux'
                 / f'{partition_name}_seapp_contexts'
@@ -218,7 +217,7 @@ def patch_partition_cil_policy(
 
     cil_path = (
         ext_fs[partition].tree
-        / partition
+        / ('system' if partition == 'system' else '')
         / 'etc'
         / 'selinux'
         / f'{partition}_sepolicy.cil'
