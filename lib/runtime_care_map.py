@@ -61,13 +61,11 @@ def filesystem_fingerprint(image: Path, name: str, scratch: Path) -> str:
     """Use authenticated existing tools and Android's canonical property paths."""
     scratch.mkdir()
     try:
-        external.unpack_avb(image, scratch)
-        raw = scratch / 'raw.img'
-        with raw.open('rb') as stream:
+        with image.open('rb') as stream:
             stream.seek(1024 + 56)
             if stream.read(2) != b'\x53\xef':
                 raise ValueError(f'{name}: runtime property proof currently requires ext4')
-        external.unpack_fs(raw, scratch)
+        external.unpack_fs(image, scratch)
         relative = ('system/build.prop' if name == 'system' else
                     'build.prop' if name == 'vendor' else 'etc/build.prop')
         prop = scratch / 'fs_tree' / relative
@@ -150,7 +148,7 @@ def expected_output_map(source: dict[str, dict[str, str]],
     for name in sorted(set(source) & set(replacements)):
         directory = scratch / name
         directory.mkdir()
-        external.unpack_avb(replacements[name], directory)
+        external.unpack_avb(replacements[name], directory, metadata_only=True)
         with (directory / 'avb.toml').open('rb') as stream:
             metadata = tomlkit.load(stream)
         descriptors = [d for d in metadata['header']['descriptors']

@@ -10,7 +10,9 @@ remain mandatory in this mode.
 The signed source map is checked against the required authenticated partition
 set, protected data extents and deterministic payload writes. Each partition
 is freshly extracted and its size and SHA-256 must match the successful
-cryptographic verifier's report before afsr reads its ext4 build property.
+cryptographic verifier's report before afsr reads its ext4 build property directly from that exact image.
+The ext4 reader uses filesystem geometry and accepts the authenticated AVB
+suffix; it does not reverify or repair a second AVB unpack copy.
 The canonical Android property paths are `/system/build.prop` for system,
 `/build.prop` for vendor and `/etc/build.prop` for the other partitions.
 Unsupported filesystems and missing or duplicate properties fail closed.
