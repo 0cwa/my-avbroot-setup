@@ -16,5 +16,19 @@
     "rust_toolchain": "1.99.0",
     "schema": "avbroot-development-source-v1"
   },
-  "validation_status": "pending hosted frozen source build/full tests and actual sealed transport"
+  "validation_evidence": {
+    "diagnostic_binary_sha256": "06f2dadf67f818cd02baa04ec1ceea74cca6fa53cf038b3f96dbd81c544797b6",
+    "full_source_tests_and_sealed_transport_run": 38426169172,
+    "helper_tests_run": 38426168785,
+    "known_accepted_fixture_sha256": "ae8f13e057c3d4e5fa5b292dbce29ec85e5a314d3bf81f0a6adda4999aa5537e",
+    "known_fixture_result": "trusted OTA/payload/partition/AVB/recovery certificate and all six expected care-map partitions passed; both vbmeta flags zero",
+    "limitation": "Frozen previously accepted OTA regression; no new firmware or physical-device acceptance.",
+    "strict_counterchecks": [
+      "signed expected key accepted",
+      "wrong key rejected",
+      "unsigned explicit key rejected",
+      "tampered signed header rejected"
+    ],
+    "wrong_expected_fingerprint": "rejected; no success report emitted"
+  }
 }
