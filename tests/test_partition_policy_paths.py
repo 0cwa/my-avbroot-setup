@@ -31,14 +31,39 @@ class PartitionPolicyPathsTest(unittest.TestCase):
                 images[name] = ImageFilesystem(tree)
             archive = root/'module.zip'
             with zipfile.ZipFile(archive,'w') as output:
-                output.writestr('seapp_contexts', b'user=_app name=example domain=priv_app')
+                output.writestr('seapp_contexts', b'user=_app isPrivApp=true name=com.chiller3.msd domain=msd_app type=app_data_file levelFrom=all')
             with zipfile.ZipFile(archive) as source:
                 modules.append_seapp_contexts(source,'seapp_contexts',images,True)
+            # Android loads these files together; module selectors must occur once.
+            combined = b''
             for name in images:
                 base = images[name].tree/'system' if name == 'system' else images[name].tree
                 label = 'plat' if name == 'system' else name
-                self.assertIn(b'name=example',(base/f'etc/selinux/{label}_seapp_contexts').read_bytes())
+                contexts = (base/f'etc/selinux/{label}_seapp_contexts').read_bytes()
+                combined += contexts
+                if name == 'system':
+                    self.assertIn(b'name=com.chiller3.msd', contexts)
+                else:
+                    self.assertEqual(b'original\n', contexts)
                 rules = ['(allow example example (file (read)))']
                 modules.patch_partition_cil_policy(images,name,rules,'; test rule')
                 modules.patch_partition_cil_policy(images,name,rules,'; test rule')
                 self.assertEqual(1,(base/f'etc/selinux/{name}_sepolicy.cil').read_text().count('; test rule'))
+
+            self.assertEqual(1, combined.count(b'name=com.chiller3.msd'))
+
+    def test_noncompatible_mode_needs_only_platform_contexts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            contexts = root/'system/etc/selinux/plat_seapp_contexts'
+            contexts.parent.mkdir(parents=True)
+            contexts.write_bytes(b'original\n')
+            archive = root/'module.zip'
+            rule = b'user=_app isPrivApp=true name=com.chiller3.custota domain=custota_app'
+            with zipfile.ZipFile(archive, 'w') as output:
+                output.writestr('seapp_contexts', rule)
+            with zipfile.ZipFile(archive) as source:
+                modules.append_seapp_contexts(
+                    source, 'seapp_contexts', {'system': ImageFilesystem(root)}, False
+                )
+            self.assertEqual(b'original\n' + rule + b'\n', contexts.read_bytes())

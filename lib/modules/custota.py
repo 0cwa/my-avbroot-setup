@@ -96,7 +96,7 @@ class CustotaModule(LegacyCliModule):
                         outputs=[sepolicy],
                     )
 
-            # Append seapp_contexts to all relevant partitions
+            # Add app-label rules once to the platform context file
             modules.append_seapp_contexts(
                 z, 'plat_seapp_contexts', ext_fs, compatible_sepolicy
             )
