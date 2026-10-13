@@ -1,8 +1,8 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 72596e5..9005b82 100644
+index d2efd5d..9c00ab4 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -171,6 +171,7 @@ dependencies = [
+@@ -170,6 +170,7 @@ dependencies = [
   "ruzstd",
   "scrypt",
   "serde",
@@ -10,7 +10,7 @@ index 72596e5..9005b82 100644
   "sha1",
   "sha2",
   "system-properties",
-@@ -928,6 +929,12 @@ dependencies = [
+@@ -921,6 +922,12 @@ dependencies = [
   "either",
  ]
  
@@ -23,8 +23,8 @@ index 72596e5..9005b82 100644
  [[package]]
  name = "keccak"
  version = "0.2.2"
-@@ -1701,6 +1708,19 @@ dependencies = [
-  "syn 3.0.5",
+@@ -1617,6 +1624,19 @@ dependencies = [
+  "syn 3.0.7",
  ]
  
 +[[package]]
@@ -42,12 +42,11 @@ index 72596e5..9005b82 100644
 +
  [[package]]
  name = "serde_spanned"
- version = "1.1.1"
-@@ -2284,3 +2304,9 @@ name = "zlib-rs"
- version = "0.6.7"
+ version = "1.1.2"
+@@ -2200,3 +2220,8 @@ name = "zlib-rs"
+ version = "0.6.8"
  source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
-+
+ checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 +[[package]]
 +name = "zmij"
 +version = "1.0.23"
@@ -112,17 +111,17 @@ index 6f7a9bf..cfd3e73 100644
 +of bypassing that trust comparison. Verification without a trust key retains
 +the existing ability to inspect unsigned images.
 diff --git a/avbroot/Cargo.toml b/avbroot/Cargo.toml
-index 165f5b4..52f234b 100644
+index cf27ace..d1e868f 100644
 --- a/avbroot/Cargo.toml
 +++ b/avbroot/Cargo.toml
-@@ -50,6 +50,7 @@ ring = "0.17.14"
- rsa = { version = "0.10.0-rc.18", features = ["sha1", "sha2"] }
+@@ -50,6 +50,7 @@ rsa = { version = "0.10.0-rc.19", features = ["sha1", "sha2"] }
  ruzstd = "0.9.0"
  scrypt = { version = "0.12.0", features = ["phc"] }
-+serde_json = "1.0"
  serde = { version = "1.0.188", features = ["derive"] }
++serde_json = "1.0"
  sha1 = "0.11.0"
  sha2 = "0.11.0"
+ tempfile = "3.8.0"
 diff --git a/avbroot/src/cli/avb.rs b/avbroot/src/cli/avb.rs
 index 10da0ee..fcab08e 100644
 --- a/avbroot/src/cli/avb.rs
