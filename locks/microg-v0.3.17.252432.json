@@ -16,8 +16,11 @@
           "id": "companion-apk",
           "immutable_url": "https://github.com/microg/GmsCore/releases/download/v0.3.17.252432/com.android.vending-84022634.apk",
           "kind": "apk",
+          "legal": null,
+          "role": "injection-input",
           "sha256": "9b8616011cc8f026bcbbe094df850794abb9d6d9f23214d7a8f8c4d1033ea012",
           "size": 4210169,
+          "source": null,
           "source_verification": null,
           "version": "84022634"
         },
@@ -35,8 +38,11 @@
           "id": "gmscore-apk",
           "immutable_url": "https://github.com/microg/GmsCore/releases/download/v0.3.17.252432/com.google.android.gms-252432034.apk",
           "kind": "apk",
+          "legal": null,
+          "role": "injection-input",
           "sha256": "e5e6cba078bdec812b5450599350e5c1a12c8b7438da5bf77123af170f8c1a35",
           "size": 108113833,
+          "source": null,
           "source_verification": null,
           "version": "252432034"
         }
