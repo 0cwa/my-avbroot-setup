@@ -151,6 +151,7 @@ class ToolRunner:
         subprocess.check_call(command, **kwargs)
 
 
+
 _tool_runner = ToolRunner()
 
 
@@ -200,7 +201,15 @@ class SigningKey:
     pass_file: Path | None
 
 
-def verify_ota(ota: Path, public_key_avb: Path | None, cert_ota: Path | None):
+def verify_ota(
+    ota: Path,
+    public_key_avb: Path | None,
+    cert_ota: Path | None,
+    *,
+    expected_care_map: Path | None = None,
+    verification_report: Path | None = None,
+) -> None:
+    """Strictly authenticate OTA, payload images and AVB, with no error waivers."""
     logger.info(f'Verifying OTA: {ota}')
 
     cmd = [
@@ -216,7 +225,34 @@ def verify_ota(ota: Path, public_key_avb: Path | None, cert_ota: Path | None):
         cmd.append('--cert-ota')
         cmd.append(cert_ota)
 
+    if expected_care_map is not None:
+        cmd.extend(('--expected-care-map', expected_care_map))
+    if verification_report is not None:
+        cmd.extend(('--verification-report', verification_report))
+
     _run_command(cmd)
+
+
+
+def encode_output_avb_public_key(key: SigningKey, output: Path) -> None:
+    """Derive the expected output AVB identity from the configured signing key.
+
+    The output verifier must not trust the AVB public key embedded in the
+    newly signed OTA as the sole source of its expected signing identity.
+    """
+    cmd = [
+        'avbroot', 'key', 'encode-avb',
+        '--key', key.key,
+        '--output', output,
+    ]
+    if key.pass_env is not None:
+        cmd.extend(('--pass-env-var', key.pass_env))
+    elif key.pass_file is not None:
+        cmd.extend(('--pass-file', key.pass_file))
+
+    _run_command(cmd)
+    if not output.is_file() or output.stat().st_size == 0:
+        raise RuntimeError('failed to derive nonempty output AVB public key')
 
 
 def unpack_ota(ota: Path, output_dir: Path, partitions: Iterable[str]):
@@ -279,13 +315,14 @@ def patch_ota(
     _run_command(cmd)
 
 
-def unpack_avb(image: Path, output_dir: Path):
+def unpack_avb(image: Path, output_dir: Path, *, metadata_only: bool = False):
     logger.info(f'Unpacking AVB image: {image}')
 
     _run_command([
         'avbroot', 'avb', 'unpack',
         '--quiet',
         '--input', image.absolute(),
+        *(['--no-output-raw'] if metadata_only else []),
     ], cwd=output_dir)
 
 

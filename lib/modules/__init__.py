@@ -102,18 +102,14 @@ def append_seapp_contexts(
     ext_fs: dict[str, ExtFs],
     compatible_sepolicy: bool = False,
 ):
-    """
-    Append seapp_contexts from a module zip to the appropriate partition files.
+    """Append module app-label rules once, to the platform context file.
 
-    In compatible mode, appends to all partition-specific seapp_contexts files
-    (plat, vendor, odm) to ensure consistent app labeling across partitions.
-
-    Args:
-        zip: Module zipfile containing seapp_contexts
-        seapp_contexts_name: Name of the seapp_contexts file in the zip
-        ext_fs: Dictionary of filesystem objects by partition name
-        compatible_sepolicy: If True, also append to vendor/odm seapp_contexts
+    Android loads platform, vendor, and ODM app contexts together. Copying the
+    same selectors into vendor and ODM causes a duplicate-entry error and can
+    prevent system_server from starting. Compatible policy patching still
+    updates binary/CIL policies separately; it must not duplicate app rules.
     """
+    del compatible_sepolicy
     # Always append to plat_seapp_contexts
     system_fs = ext_fs['system']
     plat_seapp = 'system/etc/selinux/plat_seapp_contexts'
@@ -125,33 +121,6 @@ def append_seapp_contexts(
     ):
         shutil.copyfileobj(f_in, f_out)
         f_out.write(b'\n')
-
-    # In compatible mode, also append to vendor/odm seapp_contexts if they exist
-    if compatible_sepolicy:
-        for partition_name in ['vendor', 'odm']:
-            if partition_name not in ext_fs:
-                continue
-
-            partition_fs = ext_fs[partition_name]
-            seapp_file = f'{partition_name}/etc/selinux/{partition_name}_seapp_contexts'
-            seapp_path = (
-                partition_fs.tree
-                / partition_name
-                / 'etc'
-                / 'selinux'
-                / f'{partition_name}_seapp_contexts'
-            )
-
-            if seapp_path.exists():
-                logger.info(f'Adding seapp contexts to: {seapp_file} (compatible mode)')
-                with (
-                    zip.open(seapp_contexts_name, 'r') as f_in,
-                    partition_fs.open(seapp_file, 'ab') as f_out,
-                ):
-                    shutil.copyfileobj(f_in, f_out)
-                    f_out.write(b'\n')
-            else:
-                logger.info(f'Skipping {seapp_file}: file does not exist')
 
 
 def patch_vendor_cil_for_ueventd(
@@ -218,7 +187,7 @@ def patch_partition_cil_policy(
 
     cil_path = (
         ext_fs[partition].tree
-        / partition
+        / ('system' if partition == 'system' else '')
         / 'etc'
         / 'selinux'
         / f'{partition}_sepolicy.cil'

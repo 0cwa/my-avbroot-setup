@@ -436,8 +436,9 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             patch_report=report_path,
         )
 
-        def verify_ota(*unused) -> None:
+        def verify_ota(*unused, **options) -> bool:
             events.append('verify-ota')
+            return False
 
         real_build_patch_report = patch_script.build_patch_report
 
@@ -449,6 +450,7 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             events.append('patch-ota')
 
         with (
+            mock.patch.object(patch_script.external, 'encode_output_avb_public_key'),
             mock.patch.object(patch_script, 'load_catalog', return_value=self.catalog),
             mock.patch.object(
                 patch_script,
@@ -475,7 +477,7 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             patch_script.run(args, self.root / 'work')
 
         self.assertEqual(
-            ['construct', 'verify-ota', 'inject', 'build-report', 'patch-ota'],
+            ['construct', 'verify-ota', 'inject', 'build-report', 'patch-ota', 'verify-ota'],
             events,
         )
         report = json.loads(report_path.read_text(encoding='UTF-8'))

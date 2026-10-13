@@ -6,14 +6,16 @@
 import argparse
 import dataclasses
 import logging
+import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import zipfile
 import tomlkit
 
-from lib import external, modules
+from lib import external, modules, runtime_care_map
 from lib import filesystem
 from lib.filesystem import CpioFs, CpioInfo, ExtFs, ExtInfo
 from lib.modules.registry import (
@@ -129,6 +131,16 @@ def parse_args():
         '--verify-cert-ota',
         type=Path,
         help='OTA certificate for verifying input OTA',
+    )
+    parser.add_argument(
+        '--runtime-care-map', '--allow-source-care-map-mismatch',
+        dest='allow_source_care_map_mismatch',
+        action='store_true',
+        help=(
+            'Use filesystem-derived runtime care maps with strict expected-map '
+            'verification for source and final signed outputs; '
+            'verify each rebuilt OTA before generating publication assets'
+        ),
     )
     parser.add_argument(
         '--sign-key-avb',
@@ -250,6 +262,14 @@ def parse_args():
     except ValueError:
         parser.error('--tool-runner-prefix-json is invalid')
 
+    if args.allow_source_care_map_mismatch and (
+        args.verify_public_key_avb is None or args.verify_cert_ota is None
+    ):
+        parser.error(
+            '--runtime-care-map requires both '
+            '--verify-public-key-avb and --verify-cert-ota'
+        )
+
     if args.output is None:
         args.output = Path(f'{args.input}.patched')
 
@@ -295,8 +315,11 @@ def _patch_ota_outputs(
     sign_key_avb: external.SigningKey,
     sign_key_ota: external.SigningKey,
     replacements: dict[str, Path],
+    expected_care_map: Path | None = None,
 ) -> None:
     for output, patch_args in _patch_output_plans(args):
+        if expected_care_map is not None:
+            patch_args = [*patch_args, '--expected-care-map', str(expected_care_map)]
         external.patch_ota(
             args.input,
             output,
@@ -306,6 +329,7 @@ def _patch_ota_outputs(
             replacements,
             patch_args,
         )
+
 
 
 def _run(
@@ -351,6 +375,8 @@ def _run(
         need_ext_fs |= requirements.ext_images
         need_sepolicies |= requirements.selinux_patching
 
+    repack_ext_fs = set(need_ext_fs)
+
     # If we're messing with any ext filesystems, then we need to load the system
     # images to get the list of SELinux contexts.
     if need_ext_fs:
@@ -361,11 +387,24 @@ def _run(
     if need_sepolicies:
         need_boot_fs.add('vendor_boot')
         need_ext_fs.add('vendor')
+        repack_ext_fs.add('vendor')
         if args.compatible_sepolicy:
             need_ext_fs.add('odm')
+            repack_ext_fs.add('odm')
 
-    # Verify OTA.
-    external.verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
+    # Runtime-map mode uses a strict reviewed expected-map verifier. No
+    # verifier error or log pattern is accepted as authentication evidence.
+    runtime_map = getattr(args, 'allow_source_care_map_mismatch', False)
+    source_entries = None
+    if runtime_map:
+        source_expected = temp_dir / 'source-expected.pb'
+        runtime_care_map.write_map(runtime_care_map.read_map(args.input), source_expected)
+        source_entries = runtime_care_map.verify_output(
+            args.input, source_expected, args.verify_public_key_avb,
+            args.verify_cert_ota, temp_dir / 'source-proof', source=True,
+        )
+    else:
+        external.verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
 
     # Unpack OTA.
     images_dir = temp_dir / 'images'
@@ -417,7 +456,7 @@ def _run(
         for partition_name, fs in ext_fs.items():
             partition_contexts_file = (
                 fs.tree
-                / partition_name
+                / ('system' if partition_name == 'system' else '')
                 / 'etc'
                 / 'selinux'
                 / f'{partition_name}_file_contexts'
@@ -482,8 +521,16 @@ def _run(
         else None
     )
 
-    # Repack ext filesystem images.
-    for name, fs in ext_fs.items():
+    # A filesystem loaded solely for label lookup is read-only preparation,
+    # and must not be repacked or become a replacement image.
+    for name in need_ext_fs - repack_ext_fs:
+        paths = ExtImagePaths(images_dir, temp_dir, name)
+        shutil.rmtree(paths.unpacked)
+        paths.image.unlink()
+
+    # Repack only filesystems declared as mutation targets by the modules.
+    for name in repack_ext_fs:
+        fs = ext_fs[name]
         paths = ExtImagePaths(images_dir, temp_dir, name)
 
         with open(paths.metadata, 'w') as f:
@@ -491,6 +538,7 @@ def _run(
 
         external.pack_fs(paths.raw_image, paths.unpacked)
         external.pack_avb(paths.image, paths.unpacked, sign_key_avb, True)
+        shutil.rmtree(paths.unpacked)
 
     # Repack boot images.
     for name, fs in boot_fs.items():
@@ -502,20 +550,45 @@ def _run(
         external.pack_cpio(paths.ramdisk, paths.unpacked)
         external.pack_boot(paths.raw_image, paths.unpacked)
         external.pack_avb(paths.image, paths.unpacked, sign_key_avb, False)
+        shutil.rmtree(paths.unpacked)
 
     # Patch one or two OTA outputs from the same prepared replacement images.
     # The secondary output path intentionally reuses all expensive verification,
     # extraction, module injection, filesystem repacking, and AVB repacking work.
     replacements = {
         name: images_dir / f'{name}.img'
-        for name in boot_fs | ext_fs
+        for name in set(boot_fs) | repack_ext_fs
     }
-    _patch_ota_outputs(
-        args,
-        sign_key_avb,
-        sign_key_ota,
-        replacements,
-    )
+    expected_output = None
+    if runtime_map:
+        implicit_system_extent = None
+        if any('--skip-system-ota-cert' not in patch_args
+               for _, patch_args in _patch_output_plans(args)):
+            source_report = json.loads((temp_dir / 'source-proof' / 'verified.json').read_text())
+            implicit_system_extent = next(
+                record['verity_data_size'] for record in source_report['partitions']
+                if record['name'] == 'system'
+            )
+        expected_output = runtime_care_map.expected_output_map(
+            source_entries, replacements, temp_dir / 'output-map',
+            implicit_system_extent=implicit_system_extent,
+        )
+    _patch_ota_outputs(args, sign_key_avb, sign_key_ota, replacements, expected_output)
+
+    # Prepared replacements are no longer needed once both payloads exist.
+    shutil.rmtree(images_dir, ignore_errors=True)
+
+    # Both final signed payloads must pass before any sidecar or success report.
+    public_key_avb = temp_dir / 'expected-output-avb-pkmd.bin'
+    external.encode_output_avb_public_key(sign_key_avb, public_key_avb)
+    for index, (output, _) in enumerate(_patch_output_plans(args)):
+        if runtime_map:
+            runtime_care_map.verify_output(
+                output, expected_output, public_key_avb, args.sign_cert_ota,
+                temp_dir / f'output-proof-{index}',
+            )
+        else:
+            external.verify_ota(output, public_key_avb, args.sign_cert_ota)
 
     if not args.skip_custota_tool:
         # Generate Custota csig.

@@ -21,6 +21,9 @@ FDROID_REPOSITORY_CERT_SHA256 = \
     '43238D512C1E5EB2D6569F4A3AFBF5523418B82E0A3ED1552770ABB9A9C9CCAB'
 FDROID_OPENPGP_PRIMARY = '37D2C98789D8311948394E3E41E7044E1DBA2E89'
 FDROID_OPENPGP_SUBKEY = '802A9799016112346E1FEFF47A029E54DD5DCE7A'
+MICROG_APK_SIGNER_SHA256 = (
+    '9bd06727e62796c0130eb6dab39b73157451582cbd138e86c468acc395d14165'
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -110,6 +113,17 @@ LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = (
             FDROID_OPENPGP_PRIMARY,
             FDROID_OPENPGP_SUBKEY,
         ),
+        digest_required=True,
+    ),
+    AdapterRegistration(
+        id='microg',
+        constructor_module='lib.modules.microg',
+        constructor_name='MicroGModule',
+        verification_schemes=(
+            'sha256',
+            'apk-signature',
+        ),
+        trusted_signers=(MICROG_APK_SIGNER_SHA256,),
         digest_required=True,
     ),
 )

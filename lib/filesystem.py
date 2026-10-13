@@ -243,8 +243,19 @@ class ExtFs:
 
         return abs_path, tree_path
 
-    def _install_label(self, path: PurePosixPath) -> str:
-        path_str = str(path)
+    def _install_label(
+        self,
+        path: PurePosixPath,
+        *,
+        label_mountpoint: str = "",
+    ) -> str:
+        # A partition image uses "/" as its filesystem root, but Android's
+        # file_contexts patterns describe paths in the mounted namespace.
+        # This prefix affects labels only, never the destination or metadata
+        # paths. Legacy callers keep the original empty prefix.
+        if label_mountpoint not in ("", "/product"):
+            raise ExtInstallError("unsupported installation label mountpoint")
+        path_str = label_mountpoint + str(path)
         try:
             return next(
                 label for pattern, label in self.contexts if pattern.fullmatch(path_str)
@@ -390,7 +401,11 @@ class ExtFs:
     def _preflight_install(
         self,
         requests: Iterable[ExtInstallRequest],
+        *,
+        label_mountpoint: str = "",
     ) -> list[_ExtInstallPlanEntry]:
+        if label_mountpoint not in ("", "/product"):
+            raise ExtInstallError("unsupported installation label mountpoint")
         request_list = list(requests)
         metadata_by_path: dict[PurePosixPath, ExtEntry] = {}
         for metadata_entry in self.info.entries:
@@ -408,7 +423,11 @@ class ExtFs:
             path, tree_path = self._install_path(request.path)
             if path in planned:
                 raise ExtInstallError(f"duplicate installation path: {path}")
-            planned[path] = (request, tree_path, self._install_label(path))
+            planned[path] = (
+                request,
+                tree_path,
+                self._install_label(path, label_mountpoint=label_mountpoint),
+            )
 
         # Validate every touched namespace component against both representations.
         touched = set(planned)
@@ -493,22 +512,34 @@ class ExtFs:
     def preflight_install(
         self,
         requests: Iterable[ExtInstallRequest],
+        *,
+        label_mountpoint: str = "",
     ) -> list[ExtInstallResult]:
         """Validate a complete batch without changing metadata or tree contents."""
 
         return [
             ExtInstallResult(path=item.path, status=item.status)
-            for item in self._preflight_install(requests)
+            for item in self._preflight_install(
+                requests, label_mountpoint=label_mountpoint
+            )
         ]
 
     def install(
         self,
         requests: Iterable[ExtInstallRequest],
+        *,
+        label_mountpoint: str = "",
     ) -> list[ExtInstallResult]:
         """Preflight and install a complete batch of directories and files."""
 
         request_list = list(requests)
-        plan = self._preflight_install(request_list)
+        plan = (
+            self._preflight_install(request_list)
+            if not label_mountpoint
+            else self._preflight_install(
+                request_list, label_mountpoint=label_mountpoint
+            )
+        )
         additions = [item for item in plan if item.status == "created"]
 
         # Recheck existing requested files through no-follow directory handles.

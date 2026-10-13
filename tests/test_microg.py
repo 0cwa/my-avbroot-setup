@@ -1,0 +1,267 @@
+# SPDX-FileCopyrightText: 2026 PixeneOS
+# SPDX-License-Identifier: GPL-3.0-only
+
+from pathlib import Path, PurePosixPath
+import re
+import tempfile
+import unittest
+
+from lib.filesystem import ExtEntry, ExtFs, ExtInfo, ExtInstallResult
+from lib.modules.locks import load_canonical_lock
+from lib.modules.microg import (
+    COMPANION_ARTIFACT_ID,
+    COMPANION_PATH,
+    COMPANION_VERSION_CODE,
+    GMSCORE_ARTIFACT_ID,
+    GMSCORE_PATH,
+    GMSCORE_VERSION_CODE,
+    INJECTED_PATHS,
+    MicroGAdapterError,
+    MicroGModule,
+    RELEASE,
+)
+from lib.modules.registry import MICROG_APK_SIGNER_SHA256
+from lib.modules.resolver import CompatibilityDecision
+from lib.modules.verified import LockedAdapterContext, VerifiedArtifact
+
+
+class RecordingProduct:
+    def __init__(self) -> None:
+        self.requests = None
+
+    def install(self, requests, *, label_mountpoint=''):
+        if label_mountpoint != '/product':
+            raise AssertionError('microG must use mounted product SELinux labels')
+        self.requests = tuple(requests)
+        return tuple(
+            ExtInstallResult(Path(request.path), 'created')
+            for request in self.requests
+        )
+
+
+def artifact(
+    artifact_id: str,
+    package_name: str,
+    version_code: int,
+    payload: bytes,
+):
+    source = tempfile.TemporaryFile()
+    source.write(payload)
+    source.flush()
+    source.seek(0)
+    return VerifiedArtifact(
+        id=artifact_id,
+        kind='apk',
+        role='injection-input',
+        version=str(version_code),
+        size=len(payload),
+        sha256='00' * 32,
+        apk_package_name=package_name,
+        apk_version_code=version_code,
+        apk_signer_sha256=MICROG_APK_SIGNER_SHA256,
+        archive_members=(),
+        archive_apk_signers=(),
+        license='Apache-2.0',
+        source_offer_required=False,
+        corresponding_source_artifact=None,
+        allowed_output_scopes=(
+            'local-unpublished',
+            'private',
+            'shared',
+            'published',
+        ),
+        _source=source,
+    )
+
+
+def context(rom_family='lineageos'):
+    companion = artifact(
+        COMPANION_ARTIFACT_ID,
+        'com.android.vending',
+        COMPANION_VERSION_CODE,
+        b'companion',
+    )
+    gmscore = artifact(
+        GMSCORE_ARTIFACT_ID,
+        'com.google.android.gms',
+        GMSCORE_VERSION_CODE,
+        b'gmscore',
+    )
+    ctx = LockedAdapterContext(
+        module_id='microg',
+        module_version=RELEASE,
+        profile_id='lineage-pdx235',
+        rom_family=rom_family,
+        output_scope='published',
+        lock_sha256='11' * 32,
+        selection_fingerprint='22' * 32,
+        decision=CompatibilityDecision(
+            module='microg',
+            rom_status='experimental',
+            reason={'code': 'lineage-validation-pending', 'message': 'pending'},
+            warnings=(),
+        ),
+        trusted_signers=(
+            ('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),
+        ),
+        artifacts=(companion, gmscore),
+    )
+    return ctx
+
+
+def close_context(ctx):
+    for item in ctx.artifacts:
+        item._source.close()
+
+
+class MicroGAdapterTest(unittest.TestCase):
+    def test_injects_reviewed_product_privapp_layout(self) -> None:
+        ctx = context()
+        self.addCleanup(close_context, ctx)
+        module = MicroGModule(ctx)
+        product = RecordingProduct()
+        report = module.inject({}, {'product': product}, ())
+        by_path = {str(request.path): request for request in product.requests}
+        self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
+        self.assertEqual(b'gmscore', by_path[GMSCORE_PATH.removeprefix('/product')].data)
+        self.assertEqual(b'companion', by_path[COMPANION_PATH.removeprefix('/product')].data)
+        self.assertNotIn('/product', {str(request.path) for request in product.requests})
+        self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
+        self.assertEqual({'product'}, module.requirements().ext_images)
+
+
+    def test_installs_into_real_product_image_root(self) -> None:
+        # AFSR represents product.img at "/", NOT at "/product". This is
+        # intentionally a real ExtFs installer, not a recording fake.
+        context_data = context()
+        self.addCleanup(close_context, context_data)
+        module = MicroGModule(context_data)
+        with tempfile.TemporaryDirectory() as tempdir:
+            tree = Path(tempdir)
+            parents = (
+                '/',
+                '/etc',
+                '/etc/permissions',
+                '/etc/default-permissions',
+                '/etc/sysconfig',
+                '/priv-app',
+            )
+            entries = []
+            for path in parents:
+                if path != '/':
+                    (tree / path.lstrip('/')).mkdir(parents=True, exist_ok=True)
+                entries.append(ExtEntry(
+                    path=PurePosixPath(path),
+                    file_type='Directory',
+                    file_mode=0o755,
+                    uid=0,
+                    gid=0,
+                    xattrs={'security.selinux': 'u:object_r:system_file:s0\0'},
+                ))
+            fs = ExtFs(
+                info=ExtInfo(
+                    metadata={
+                        'features': [],
+                        'block_size': 4096,
+                        'reserved_percentage': 0,
+                        'uuid': '00000000-0000-0000-0000-000000000000',
+                    },
+                    entries=entries,
+                ),
+                tree=tree,
+                contexts=[
+                    (
+                        re.compile(r'/product/priv-app(?:/.*)?'),
+                        'u:object_r:privapp_data_file:s0',
+                    ),
+                    (
+                        re.compile(r'/product/.*'),
+                        'u:object_r:system_file:s0',
+                    ),
+                ],
+            )
+            report = module.inject({}, {'product': fs}, ())
+            self.assertEqual(set(INJECTED_PATHS), set(report.injected_paths))
+            self.assertEqual(
+                b'gmscore',
+                (tree / GMSCORE_PATH.removeprefix('/product/')).read_bytes(),
+            )
+            self.assertEqual(
+                b'companion',
+                (tree / COMPANION_PATH.removeprefix('/product/')).read_bytes(),
+            )
+            self.assertEqual(9, len(fs.info.entries) - len(parents))
+            labels = {
+                str(entry.path): entry.xattrs['security.selinux']
+                for entry in fs.info.entries
+            }
+            self.assertEqual(
+                'u:object_r:privapp_data_file:s0\0',
+                labels['/priv-app/GmsCore/GmsCore.apk'],
+            )
+            self.assertEqual(
+                'u:object_r:system_file:s0\0',
+                labels['/etc/permissions/privapp-permissions-com.google.android.gms.xml'],
+            )
+            self.assertNotIn(PurePosixPath('/product'), {
+                entry.path for entry in fs.info.entries
+            })
+
+    def test_checked_in_lock_matches_reviewed_release(self) -> None:
+        lock, _ = load_canonical_lock(
+            Path('locks/microg-v0.3.17.252432.json')
+        )
+        self.assertEqual(('microg',), tuple(module.id for module in lock.modules))
+        module = lock.modules[0]
+        self.assertEqual(RELEASE, module.version)
+        by_id = {artifact.id: artifact for artifact in module.artifacts}
+        self.assertEqual(
+            {'companion-apk', 'gmscore-apk'},
+            set(by_id),
+        )
+        expected = {
+            'companion-apk': (
+                'com.android.vending',
+                COMPANION_VERSION_CODE,
+                4210169,
+                '9b8616011cc8f026bcbbe094df850794abb9d6d9f23214d7a8f8c4d1033ea012',
+            ),
+            'gmscore-apk': (
+                'com.google.android.gms',
+                GMSCORE_VERSION_CODE,
+                108113833,
+                'e5e6cba078bdec812b5450599350e5c1a12c8b7438da5bf77123af170f8c1a35',
+            ),
+        }
+        for artifact_id, (package, version, size, digest) in expected.items():
+            artifact = by_id[artifact_id]
+            self.assertEqual(package, artifact.apk.package_name)
+            self.assertEqual(version, artifact.apk.version_code)
+            self.assertEqual(MICROG_APK_SIGNER_SHA256, artifact.apk.signer_sha256)
+            self.assertEqual(size, artifact.size)
+            self.assertEqual(digest, artifact.sha256)
+            self.assertEqual(
+                (
+                    'https://github.com',
+                    'https://release-assets.githubusercontent.com',
+                ),
+                artifact.allowed_origins,
+            )
+
+    def test_grapheneos_is_rejected_by_adapter(self) -> None:
+        ctx = context('grapheneos')
+        self.addCleanup(close_context, ctx)
+        with self.assertRaisesRegex(MicroGAdapterError, 'only LineageOS'):
+            MicroGModule(ctx)
+
+    def test_wrong_signer_is_rejected(self) -> None:
+        ctx = context()
+        self.addCleanup(close_context, ctx)
+        bad = ctx.artifacts[0]
+        object.__setattr__(bad, 'apk_signer_sha256', 'ff' * 32)
+        with self.assertRaisesRegex(MicroGAdapterError, 'unexpected identity'):
+            MicroGModule(ctx)
+
+
+if __name__ == '__main__':
+    unittest.main()

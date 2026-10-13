@@ -17,6 +17,7 @@ from lib.modules.custota import CustotaModule
 from lib.modules.fdroid_privileged_extension import (
     FDroidPrivilegedExtensionModule,
 )
+from lib.modules.microg import MicroGModule
 from lib.modules.msd import MSDModule
 from lib.modules.oemunlockonboot import OEMUnlockOnBootModule
 from lib.modules.registry import (
@@ -50,11 +51,14 @@ class ModuleRegistryTest(unittest.TestCase):
 
     def test_locked_registry_is_separate_from_legacy_modules(self) -> None:
         self.assertEqual(
-            ['fdroid-privileged-extension'],
+            ['fdroid-privileged-extension', 'microg'],
             [registration.id for registration in LOCKED_ADAPTERS],
         )
         self.assertEqual(
-            {'fdroid-privileged-extension': FDroidPrivilegedExtensionModule},
+            {
+                'fdroid-privileged-extension': FDroidPrivilegedExtensionModule,
+                'microg': MicroGModule,
+            },
             locked_adapter_factories(),
         )
 
