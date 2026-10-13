@@ -209,7 +209,7 @@ class MicroGAdapterTest(unittest.TestCase):
 
     def test_checked_in_lock_matches_reviewed_release(self) -> None:
         lock, _ = load_canonical_lock(
-            Path('locks/microg-v0.3.15.250932.json')
+            Path('locks/microg-v0.3.17.252432.json')
         )
         self.assertEqual(('microg',), tuple(module.id for module in lock.modules))
         module = lock.modules[0]
@@ -223,14 +223,14 @@ class MicroGAdapterTest(unittest.TestCase):
             'companion-apk': (
                 'com.android.vending',
                 COMPANION_VERSION_CODE,
-                4639851,
-                'a973e0235a2829773a4faf36d235d5f703d1c04a2adff674ebaa535a2e78f937',
+                4210169,
+                '9b8616011cc8f026bcbbe094df850794abb9d6d9f23214d7a8f8c4d1033ea012',
             ),
             'gmscore-apk': (
                 'com.google.android.gms',
                 GMSCORE_VERSION_CODE,
-                105948577,
-                '52597e77fd25fdd347574d0457ed1936a4b9561cf4c8d34e7ac8dd8191dfd4b9',
+                108113833,
+                'e5e6cba078bdec812b5450599350e5c1a12c8b7438da5bf77123af170f8c1a35',
             ),
         }
         for artifact_id, (package, version, size, digest) in expected.items():

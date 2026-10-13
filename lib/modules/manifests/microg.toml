@@ -62,5 +62,5 @@ allowed_output_scopes = ['local-unpublished', 'private', 'shared', 'published']
 
 [legal.permission_record]
 reference = 'Apache-2.0 Sections 2 and 4 redistribution grant'
-source_url = 'https://github.com/microg/GmsCore/blob/v0.3.15.250932/LICENSE'
+source_url = 'https://github.com/microg/GmsCore/blob/v0.3.17.252432/LICENSE'
 granted_scopes = ['shared', 'published']

@@ -15,11 +15,11 @@ from lib.modules.verified import LockedAdapterContext, VerifiedArtifact
 
 
 MODULE_ID: Final = 'microg'
-RELEASE: Final = 'v0.3.15.250932'
+RELEASE: Final = 'v0.3.17.252432'
 GMSCORE_ARTIFACT_ID: Final = 'gmscore-apk'
 COMPANION_ARTIFACT_ID: Final = 'companion-apk'
-GMSCORE_VERSION_CODE: Final = 250932030
-COMPANION_VERSION_CODE: Final = 84022630
+GMSCORE_VERSION_CODE: Final = 252432034
+COMPANION_VERSION_CODE: Final = 84022634
 
 GMSCORE_PATH: Final = '/product/priv-app/GmsCore/GmsCore.apk'
 COMPANION_PATH: Final = '/product/priv-app/FakeStore/FakeStore.apk'
