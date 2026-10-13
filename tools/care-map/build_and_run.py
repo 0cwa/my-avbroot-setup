@@ -118,6 +118,9 @@ def build_prefix(args: argparse.Namespace) -> tuple[list[str], dict[str, object]
     cargo_program, rustc_program = pinned_compiler(environment, manifest['rust_toolchain'])
     run([str(cargo_program), 'build', '--release', '--locked', '-p', 'avbroot',
         '--no-default-features'], cwd=checkout)
+    if getattr(args, 'validate_source', False):
+        run([str(cargo_program), 'test', '--release', '--locked', '-p', 'avbroot',
+            '--no-default-features'], cwd=checkout)
     binary = checkout / 'target' / 'release' / 'avbroot'
     digest, size = sha256(binary), binary.stat().st_size
     # Capture identities before discarding the fresh checkout and its large
@@ -143,6 +146,7 @@ def build_prefix(args: argparse.Namespace) -> tuple[list[str], dict[str, object]
         'helper_revision': helper_revision,
         'rustc': rustc, 'cargo': cargo, 'binary_sha256': digest, 'binary_size': size,
         'build_command': ['cargo', 'build', '--release', '--locked', '-p', 'avbroot', '--no-default-features'],
+        'source_validation': 'full-tests-passed' if getattr(args, 'validate_source', False) else 'not-run',
         'scope': 'local nonpublishing development build; no vendor executable-lock promotion'}
     (work / 'build-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     return prefix, receipt
@@ -153,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--modos-repo', type=Path, required=True)
     parser.add_argument('--bootstrap-workdir', type=Path, required=True)
     parser.add_argument('--build-workdir', type=Path, required=True)
+    parser.add_argument('--validate-source', action='store_true',
+                        help='Run the full upstream and guarded-patch tests before compiler cleanup')
     parser.add_argument('--cargo-home', type=Path)
     parser.add_argument('--rustup-home', type=Path)
     parser.add_argument('--prepare-only', action='store_true',

@@ -1,8 +1,8 @@
 {
   "schema": "avbroot-development-source-v1",
   "repository": "https://github.com/chenxiaolong/avbroot.git",
-  "base_commit": "e805505affb042ed5ecb2e74cf5da3b465fb4e5d",
-  "patch_sha256": "0af061a9494e72c66da58488e7c1a929b68d48a6d3f4d34e8847c4c4eabddff1",
-  "cargo_lock_sha256": "7c84757cb2442a032437e6352f63f0db1eed91a62333652c28426c91f50b203f",
+  "base_commit": "4d678ffe8955de49403e593960626dfa48bd0cce",
+  "patch_sha256": "a5bfc9c90d14ea1c93efea6ec0376da97b0cdf17573b38a3fddcf44bb53f7265",
+  "cargo_lock_sha256": "4025765ab99d4585b21adcf509ccf1b21f96df68d9e8349999fd4a203232b3f0",
   "rust_toolchain": "1.99.0"
 }

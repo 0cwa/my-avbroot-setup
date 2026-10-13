@@ -13,7 +13,7 @@ Rebuild in a new working checkout:
 ```sh
 git clone https://github.com/chenxiaolong/avbroot.git avbroot-candidate
 cd avbroot-candidate
-git checkout --detach e805505affb042ed5ecb2e74cf5da3b465fb4e5d
+git checkout --detach 4d678ffe8955de49403e593960626dfa48bd0cce
 git apply /path/to/this/tools/care-map/avbroot-runtime-care-map.patch
 cargo build --release --locked -p avbroot --no-default-features
 cargo test --locked -p avbroot --no-default-features
@@ -97,3 +97,20 @@ of default unit discovery to exercise empty homes and a tiny offline build:
 ```sh
 python3 tests/cold_source_toolchain_smoke.py --workdir /path/to/work/cold-rust-smoke
 ```
+
+## Upstream 3.35 source qualification
+
+The development source manifest now targets official avbroot 3.35.0 source.
+The existing explicit-signer and runtime care-map patch is retained: requiring
+a key or digest rejects unsigned vbmeta headers, including chained verification.
+Official unpatched 3.35 still accepts an unsigned header when an expected key
+is supplied, and the OTA verifier shares that same verification function.
+The official executable lock must not be promoted on the basis of this source
+build; source and vendor-signed executable authorization remain separate.
+
+Use `build_and_run.py --validate-source --prepare-only` with the existing
+required directory arguments to run all upstream integration/unit/doc tests
+and the guarded-patch regressions before compiler cleanup. The source-engine
+CI runs this only when source inputs or its workflow change, then exercises the
+fresh binary through the authenticated runner. Historical 3.34.1 provenance
+and physical-candidate receipts remain historical evidence.
