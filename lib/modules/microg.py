@@ -64,6 +64,10 @@ def _product_image_path(mounted_path: str) -> str:
 GMSCORE_PRIVAPP_XML: Final = b'''<?xml version="1.0" encoding="utf-8"?>
 <permissions>
     <privapp-permissions package="com.google.android.gms">
+        <!-- Explicitly account for the diagnostic permission without granting
+             access to system-service dumps. An omitted request aborts Android
+             17 system_server when privileged permission enforcement is on. -->
+        <deny-permission name="android.permission.DUMP"/>
         <permission name="android.permission.FAKE_PACKAGE_SIGNATURE"/>
         <permission name="android.permission.CHANGE_DEVICE_IDLE_TEMP_WHITELIST"/>
         <permission name="android.permission.FOREGROUND_SERVICE"/>

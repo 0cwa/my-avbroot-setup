@@ -20,6 +20,16 @@ versionCode, and the single official microG APK signer before the adapter sees
 the files. The adapter also pins the reviewed module release and package
 identities.
 
+The product privileged-permission policy explicitly denies
+`android.permission.DUMP`. On the owner's pdx235 LineageOS 24.0 October 16
+rootless update, an unaccounted GmsCore request for this permission caused
+`AppIdPermissionPolicy.onSystemReady` to abort `system_server` repeatedly.
+An explicit denial satisfies permission-policy accounting without granting
+microG access to system-service diagnostic dumps. Privileged-permission
+enforcement, APK signer checks, and the remaining grants are unchanged.
+The regression verifies the XML actually passed to the product installer.
+Physical Android 17 boot acceptance still requires a repaired OTA installation.
+
 Updates intentionally require a code review of the lock, adapter release
 constants, and privileged/default-permission policy. ModOS Renovate tracks the reviewed release and proposes updates without
 automerge. Generate a candidate lock from the explicit official release with:
