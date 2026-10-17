@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 import re
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 from lib.filesystem import ExtEntry, ExtFs, ExtInfo, ExtInstallResult
 from lib.modules.locks import load_canonical_lock
@@ -115,6 +116,26 @@ def close_context(ctx):
 
 
 class MicroGAdapterTest(unittest.TestCase):
+    def test_installed_gmscore_policy_explicitly_denies_diagnostic_dump(self) -> None:
+        # The pdx235 Android 17 boot crashed system_server because GmsCore's
+        # DUMP request had neither a grant nor a denial in the product policy.
+        # Account for that request without adding access to system-service dumps.
+        ctx = context()
+        self.addCleanup(close_context, ctx)
+        product = RecordingProduct()
+        MicroGModule(ctx).inject({}, {'product': product}, ())
+        request = next(request for request in product.requests if str(request.path)
+                       == '/etc/permissions/privapp-permissions-com.google.android.gms.xml')
+        policy = ET.fromstring(request.data).find(
+            "privapp-permissions[@package='com.google.android.gms']"
+        )
+        self.assertIsNotNone(policy)
+        self.assertEqual(
+            ['deny-permission'],
+            [entry.tag for entry in policy
+             if entry.get('name') == 'android.permission.DUMP'],
+        )
+
     def test_injects_reviewed_product_privapp_layout(self) -> None:
         ctx = context()
         self.addCleanup(close_context, ctx)
