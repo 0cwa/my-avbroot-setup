@@ -4,8 +4,12 @@
 """Locked, non-executing microG image adapter for current LineageOS."""
 
 from collections.abc import Iterable
+import io
 from pathlib import Path
+import re
 from typing import Final
+import zipfile
+import zlib
 
 from lib.filesystem import CpioFs, ExtFs, ExtInstallRequest
 from lib.modules import Module, ModuleRequirements
@@ -22,6 +26,7 @@ GMSCORE_VERSION_CODE: Final = 252432034
 COMPANION_VERSION_CODE: Final = 84022634
 
 GMSCORE_PATH: Final = '/product/priv-app/GmsCore/GmsCore.apk'
+GMSCORE_LIB_PATH: Final = '/product/priv-app/GmsCore/lib'
 COMPANION_PATH: Final = '/product/priv-app/FakeStore/FakeStore.apk'
 GMSCORE_PRIVAPP_PATH: Final = (
     '/product/etc/permissions/privapp-permissions-com.google.android.gms.xml'
@@ -52,6 +57,16 @@ INJECTED_PATHS: Final = tuple(sorted((
 _EXPECTED_SIGNERS: Final = (
     ('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),
 )
+
+# Android's nativeLibraryDir uses instruction-set names rather than the ABI
+# directory names used inside APKs.
+_ABI_LAYOUT: Final = {
+    'arm64-v8a': ('arm64', 2, 183),  # ELFCLASS64, EM_AARCH64
+    'armeabi-v7a': ('arm', 1, 40),  # ELFCLASS32, EM_ARM
+    'x86_64': ('x86_64', 2, 62),  # ELFCLASS64, EM_X86_64
+    'x86': ('x86', 1, 3),  # ELFCLASS32, EM_386
+}
+_NATIVE_LIBRARY_NAME: Final = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.+-]*\.so\Z')
 
 
 def _product_image_path(mounted_path: str) -> str:
@@ -156,6 +171,115 @@ def _read_artifact(artifact: VerifiedArtifact) -> bytes:
     return data
 
 
+def _extract_native_libraries(apk: bytes) -> tuple[tuple[str, bytes], ...]:
+    """Validate and extract APK JNI libraries without changing the signed APK."""
+    libraries: list[tuple[str, bytes]] = []
+    seen_names: set[str] = set()
+    seen_destinations: set[str] = set()
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(apk))
+    except (OSError, zipfile.BadZipFile) as error:
+        raise MicroGAdapterError('locked GmsCore APK is not a valid ZIP archive') from error
+
+    with archive:
+        for member in archive.infolist():
+            name = member.orig_filename
+            if (
+                not name
+                or member.filename != name
+                or '\\' in name
+                or '\0' in name
+                or name.startswith('/')
+                or '//' in name
+                or any(part in ('.', '..') for part in name.rstrip('/').split('/'))
+            ):
+                raise MicroGAdapterError('GmsCore APK contains an unsafe ZIP path')
+            if name in seen_names:
+                raise MicroGAdapterError(
+                    f'GmsCore APK contains a duplicate ZIP path: {name}'
+                )
+            seen_names.add(name)
+
+            if not name.startswith('lib/'):
+                continue
+            parts = name.split('/')
+            if len(parts) == 2 and parts == ['lib', '']:
+                mode = member.external_attr >> 16
+                if (mode & 0o170000) not in (0, 0o040000):
+                    raise MicroGAdapterError(
+                        'GmsCore APK contains a non-directory lib root'
+                    )
+                continue
+            if len(parts) == 3 and parts[0] == 'lib' and parts[1] in _ABI_LAYOUT:
+                if member.is_dir() and parts[2] == '':
+                    mode = member.external_attr >> 16
+                    if (mode & 0o170000) not in (0, 0o040000):
+                        raise MicroGAdapterError(
+                            f'GmsCore APK contains a non-directory ABI path: {name}'
+                        )
+                    continue
+            if len(parts) != 3 or parts[0] != 'lib' or parts[1] not in _ABI_LAYOUT:
+                raise MicroGAdapterError(
+                    f'GmsCore APK contains an unexpected native-library path: {name}'
+                )
+            if member.is_dir() or not _NATIVE_LIBRARY_NAME.fullmatch(parts[2]):
+                raise MicroGAdapterError(
+                    f'GmsCore APK contains an unexpected native-library entry: {name}'
+                )
+            if member.flag_bits & 0x1:
+                raise MicroGAdapterError(f'GmsCore native library is encrypted: {name}')
+
+            abi = parts[1]
+            instruction_set, expected_class, expected_machine = _ABI_LAYOUT[abi]
+            destination = f'{instruction_set}/{parts[2]}'
+            if destination in seen_destinations:
+                raise MicroGAdapterError(
+                    'GmsCore APK contains duplicate native-library output: '
+                    f'{destination}'
+                )
+            seen_destinations.add(destination)
+
+            mode = member.external_attr >> 16
+            file_type = mode & 0o170000
+            if file_type not in (0, 0o100000):
+                raise MicroGAdapterError(
+                    f'GmsCore native library is not a regular file: {name}'
+                )
+            try:
+                data = archive.read(member)
+            except (
+                OSError,
+                EOFError,
+                RuntimeError,
+                zipfile.BadZipFile,
+                NotImplementedError,
+                zlib.error,
+            ) as error:
+                raise MicroGAdapterError(
+                    f'GmsCore native library failed ZIP integrity checks: {name}'
+                ) from error
+            if (
+                len(data) < 20
+                or data[:4] != b'\x7fELF'
+                or data[4] != expected_class
+                or data[5] not in (1, 2)
+            ):
+                raise MicroGAdapterError(
+                    f'GmsCore native library has an invalid ELF header: {name}'
+                )
+            byte_order = 'little' if data[5] == 1 else 'big'
+            if int.from_bytes(data[18:20], byte_order) != expected_machine:
+                raise MicroGAdapterError(
+                    f'GmsCore native library has the wrong ELF machine: {name}'
+                )
+            libraries.append((destination, data))
+
+    if not libraries:
+        raise MicroGAdapterError('locked GmsCore APK contains no supported native libraries')
+    return tuple(sorted(libraries))
+
+
 def _require_apk(
     artifact: VerifiedArtifact,
     *,
@@ -220,6 +344,7 @@ class MicroGModule(Module):
         )
         self._companion_apk = _read_artifact(companion)
         self._gmscore_apk = _read_artifact(gmscore)
+        self._native_libraries = _extract_native_libraries(self._gmscore_apk)
 
     def requirements(self) -> ModuleRequirements:
         return ModuleRequirements(set(), {'product'}, False)
@@ -235,12 +360,49 @@ class MicroGModule(Module):
         if 'product' not in ext_fs:
             raise MicroGAdapterError('microG adapter requires the product filesystem')
         product = ext_fs['product']
-        requests = (
+        library_instruction_sets = tuple(sorted({
+            destination.split('/', 1)[0]
+            for destination, _ in self._native_libraries
+        }))
+        library_paths = tuple(
+            f'{GMSCORE_LIB_PATH}/{destination}'
+            for destination, _ in self._native_libraries
+        )
+        library_directories = (
+            GMSCORE_LIB_PATH,
+            *(
+                f'{GMSCORE_LIB_PATH}/{instruction_set}'
+                for instruction_set in library_instruction_sets
+            ),
+        )
+        injected_paths = tuple(sorted((
+            *INJECTED_PATHS,
+            *library_directories,
+            *library_paths,
+        )))
+        requests = [
             ExtInstallRequest(
                 _product_image_path('/product/priv-app/GmsCore'), 'Directory', 0o755, 0, 0
             ),
             ExtInstallRequest(
+                _product_image_path(GMSCORE_LIB_PATH), 'Directory', 0o755, 0, 0
+            ),
+            *(
+                ExtInstallRequest(
+                    _product_image_path(f'{GMSCORE_LIB_PATH}/{instruction_set}'),
+                    'Directory', 0o755, 0, 0,
+                )
+                for instruction_set in library_instruction_sets
+            ),
+            ExtInstallRequest(
                 _product_image_path(GMSCORE_PATH), 'RegularFile', 0o644, 0, 0, self._gmscore_apk
+            ),
+            *(
+                ExtInstallRequest(
+                    _product_image_path(f'{GMSCORE_LIB_PATH}/{destination}'),
+                    'RegularFile', 0o755, 0, 0, data,
+                )
+                for destination, data in self._native_libraries
             ),
             ExtInstallRequest(
                 _product_image_path('/product/priv-app/FakeStore'), 'Directory', 0o755, 0, 0
@@ -288,7 +450,7 @@ class MicroGModule(Module):
                 0,
                 COMPANION_DEFAULT_PERMISSIONS_XML,
             ),
-        )
+        ]
         # Check SELinux labels against Android's mounted /product paths while
         # writing to the product image root. Do not alter label semantics for
         # legacy system-image adapters or mutate shared context tables.
@@ -298,13 +460,13 @@ class MicroGModule(Module):
         status_by_path = {
             '/product' + str(result.path): result.status
             for result in results
-            if '/product' + str(result.path) in INJECTED_PATHS
+            if '/product' + str(result.path) in injected_paths
         }
-        if set(status_by_path) != set(INJECTED_PATHS):
+        if set(status_by_path) != set(injected_paths):
             raise MicroGAdapterError(
                 'filesystem installer returned incomplete microG results'
             )
         return AdapterPatchResult(
-            INJECTED_PATHS,
-            tuple((path, status_by_path[path]) for path in INJECTED_PATHS),
+            injected_paths,
+            tuple((path, status_by_path[path]) for path in injected_paths),
         )
