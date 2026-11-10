@@ -13,7 +13,10 @@ import zlib
 
 from lib.filesystem import CpioFs, ExtFs, ExtInstallRequest
 from lib.modules import Module, ModuleRequirements
-from lib.modules.registry import MICROG_APK_SIGNER_SHA256
+from lib.modules.registry import (
+    MICROG_APK_SIGNER_SHA256,
+    MODOS_COMPANION_SIGNER_SHA256,
+)
 from lib.modules.report import AdapterPatchResult
 from lib.modules.verified import LockedAdapterContext, VerifiedArtifact
 
@@ -24,6 +27,10 @@ GMSCORE_ARTIFACT_ID: Final = 'gmscore-apk'
 COMPANION_ARTIFACT_ID: Final = 'companion-apk'
 GMSCORE_VERSION_CODE: Final = 252432034
 COMPANION_VERSION_CODE: Final = 84022634
+# ModOS-built Companion: the same release plus ModOS's billing fix, signed with
+# the owner's key. Only the Companion may use this signer, and only with its own
+# version code; it requires a ROM with MICROG_SPOOF_PATCH to keep spoofing.
+MODOS_COMPANION_VERSION_CODE: Final = 84022635
 
 GMSCORE_PATH: Final = '/product/priv-app/GmsCore/GmsCore.apk'
 GMSCORE_LIB_PATH: Final = '/product/priv-app/GmsCore/lib'
@@ -54,8 +61,18 @@ INJECTED_PATHS: Final = tuple(sorted((
     COMPANION_DEFAULT_PERMISSIONS_PATH,
 )))
 
-_EXPECTED_SIGNERS: Final = (
+_EXPECTED_SIGNERS: Final = tuple(sorted((
     ('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),
+    ('apk-signer-sha256', MODOS_COMPANION_SIGNER_SHA256),
+)))
+
+# Exact (signer, version code) identities accepted for each package.
+_GMSCORE_IDENTITIES: Final = (
+    (MICROG_APK_SIGNER_SHA256, GMSCORE_VERSION_CODE),
+)
+_COMPANION_IDENTITIES: Final = (
+    (MICROG_APK_SIGNER_SHA256, COMPANION_VERSION_CODE),
+    (MODOS_COMPANION_SIGNER_SHA256, MODOS_COMPANION_VERSION_CODE),
 )
 
 # Android's nativeLibraryDir uses instruction-set names rather than the ABI
@@ -285,15 +302,14 @@ def _require_apk(
     *,
     artifact_id: str,
     package_name: str,
-    version_code: int,
+    identities: tuple[tuple[str, int], ...],
 ) -> None:
     if (
         artifact.id != artifact_id
         or artifact.kind != 'apk'
         or artifact.role != 'injection-input'
         or artifact.apk_package_name != package_name
-        or artifact.apk_version_code != version_code
-        or artifact.apk_signer_sha256 != MICROG_APK_SIGNER_SHA256
+        or (artifact.apk_signer_sha256, artifact.apk_version_code) not in identities
         or artifact.archive_members
     ):
         raise MicroGAdapterError(
@@ -334,13 +350,13 @@ class MicroGModule(Module):
             companion,
             artifact_id=COMPANION_ARTIFACT_ID,
             package_name='com.android.vending',
-            version_code=COMPANION_VERSION_CODE,
+            identities=_COMPANION_IDENTITIES,
         )
         _require_apk(
             gmscore,
             artifact_id=GMSCORE_ARTIFACT_ID,
             package_name='com.google.android.gms',
-            version_code=GMSCORE_VERSION_CODE,
+            identities=_GMSCORE_IDENTITIES,
         )
         self._companion_apk = _read_artifact(companion)
         self._gmscore_apk = _read_artifact(gmscore)

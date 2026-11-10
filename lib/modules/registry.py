@@ -24,6 +24,10 @@ FDROID_OPENPGP_SUBKEY = '802A9799016112346E1FEFF47A029E54DD5DCE7A'
 MICROG_APK_SIGNER_SHA256 = (
     '9bd06727e62796c0130eb6dab39b73157451582cbd138e86c468acc395d14165'
 )
+# Owner test key for the ModOS-built Companion (com.android.vending only).
+MODOS_COMPANION_SIGNER_SHA256 = (
+    'd30b31d91ed58e786f03f266d9b8fc7a6b22f388b0d632aab563c0f3cdc90bef'
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -123,7 +127,10 @@ LOCKED_ADAPTERS: tuple[AdapterRegistration, ...] = (
             'sha256',
             'apk-signature',
         ),
-        trusted_signers=(MICROG_APK_SIGNER_SHA256,),
+        trusted_signers=(
+            MICROG_APK_SIGNER_SHA256,
+            MODOS_COMPANION_SIGNER_SHA256,
+        ),
         digest_required=True,
     ),
 )
