@@ -23,10 +23,14 @@ from lib.modules.microg import (
     INJECTED_PATHS,
     MicroGAdapterError,
     MicroGModule,
+    MODOS_COMPANION_VERSION_CODE,
     RELEASE,
     _extract_native_libraries,
 )
-from lib.modules.registry import MICROG_APK_SIGNER_SHA256
+from lib.modules.registry import (
+    MICROG_APK_SIGNER_SHA256,
+    MODOS_COMPANION_SIGNER_SHA256,
+)
 from lib.modules.resolver import CompatibilityDecision
 from lib.modules.verified import LockedAdapterContext, VerifiedArtifact
 
@@ -50,6 +54,7 @@ def artifact(
     package_name: str,
     version_code: int,
     payload: bytes,
+    signer: str = MICROG_APK_SIGNER_SHA256,
 ):
     source = tempfile.TemporaryFile()
     source.write(payload)
@@ -64,7 +69,7 @@ def artifact(
         sha256='00' * 32,
         apk_package_name=package_name,
         apk_version_code=version_code,
-        apk_signer_sha256=MICROG_APK_SIGNER_SHA256,
+        apk_signer_sha256=signer,
         archive_members=(),
         archive_apk_signers=(),
         license='Apache-2.0',
@@ -138,18 +143,26 @@ def synthetic_encrypted_apk() -> bytes:
     return bytes(apk)
 
 
-def context(rom_family='lineageos'):
+def context(
+    rom_family='lineageos',
+    *,
+    companion_signer=MICROG_APK_SIGNER_SHA256,
+    companion_version=COMPANION_VERSION_CODE,
+    gmscore_signer=MICROG_APK_SIGNER_SHA256,
+):
     companion = artifact(
         COMPANION_ARTIFACT_ID,
         'com.android.vending',
-        COMPANION_VERSION_CODE,
+        companion_version,
         b'companion',
+        companion_signer,
     )
     gmscore = artifact(
         GMSCORE_ARTIFACT_ID,
         'com.google.android.gms',
         GMSCORE_VERSION_CODE,
         synthetic_gmscore_apk(),
+        gmscore_signer,
     )
     ctx = LockedAdapterContext(
         module_id='microg',
@@ -165,9 +178,10 @@ def context(rom_family='lineageos'):
             reason={'code': 'lineage-validation-pending', 'message': 'pending'},
             warnings=(),
         ),
-        trusted_signers=(
+        trusted_signers=tuple(sorted((
             ('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),
-        ),
+            ('apk-signer-sha256', MODOS_COMPANION_SIGNER_SHA256),
+        ))),
         artifacts=(companion, gmscore),
     )
     return ctx
@@ -404,6 +418,70 @@ class MicroGAdapterTest(unittest.TestCase):
         object.__setattr__(bad, 'apk_signer_sha256', 'ff' * 32)
         with self.assertRaisesRegex(MicroGAdapterError, 'unexpected identity'):
             MicroGModule(ctx)
+
+    def test_modos_companion_identity_is_accepted_only_exactly(self) -> None:
+        ctx = context(
+            companion_signer=MODOS_COMPANION_SIGNER_SHA256,
+            companion_version=MODOS_COMPANION_VERSION_CODE,
+        )
+        self.addCleanup(close_context, ctx)
+        MicroGModule(ctx)
+
+    def test_modos_signer_needs_its_own_version_code(self) -> None:
+        for signer, version in (
+            (MODOS_COMPANION_SIGNER_SHA256, COMPANION_VERSION_CODE),
+            (MICROG_APK_SIGNER_SHA256, MODOS_COMPANION_VERSION_CODE),
+        ):
+            with self.subTest(signer=signer[:8], version=version):
+                ctx = context(companion_signer=signer, companion_version=version)
+                self.addCleanup(close_context, ctx)
+                with self.assertRaisesRegex(MicroGAdapterError, 'unexpected identity'):
+                    MicroGModule(ctx)
+
+    def test_modos_signer_is_rejected_for_services(self) -> None:
+        ctx = context(gmscore_signer=MODOS_COMPANION_SIGNER_SHA256)
+        self.addCleanup(close_context, ctx)
+        with self.assertRaisesRegex(MicroGAdapterError, 'unexpected identity'):
+            MicroGModule(ctx)
+
+    def test_trust_root_must_stay_exact(self) -> None:
+        ctx = context()
+        self.addCleanup(close_context, ctx)
+        object.__setattr__(
+            ctx,
+            'trusted_signers',
+            (('apk-signer-sha256', MICROG_APK_SIGNER_SHA256),),
+        )
+        with self.assertRaisesRegex(MicroGAdapterError, 'trust root is not exact'):
+            MicroGModule(ctx)
+
+    def test_modos_lock_swaps_only_the_companion(self) -> None:
+        official, _ = load_canonical_lock(Path('locks/microg-v0.3.17.252432.json'))
+        modos, _ = load_canonical_lock(Path('locks/microg-v0.3.17.252432-modos.json'))
+        self.assertEqual(RELEASE, modos.modules[0].version)
+        official_by_id = {a.id: a for a in official.modules[0].artifacts}
+        modos_by_id = {a.id: a for a in modos.modules[0].artifacts}
+        self.assertEqual(set(official_by_id), set(modos_by_id))
+        self.assertEqual(official_by_id['gmscore-apk'], modos_by_id['gmscore-apk'])
+        companion = modos_by_id['companion-apk']
+        self.assertEqual('com.android.vending', companion.apk.package_name)
+        self.assertEqual(MODOS_COMPANION_VERSION_CODE, companion.apk.version_code)
+        self.assertEqual(MODOS_COMPANION_SIGNER_SHA256, companion.apk.signer_sha256)
+        self.assertEqual(
+            'f5ebfb43a5a8a1e3cab84a1d528e18e6a4ea91d4cc4af555a6e413bb7a6d9c2a',
+            companion.sha256,
+        )
+        self.assertEqual(4293737, companion.size)
+        self.assertTrue(companion.immutable_url.startswith(
+            'https://github.com/0cwa/my-avbroot-setup/releases/download/'
+        ))
+        self.assertEqual(
+            (
+                'https://github.com',
+                'https://release-assets.githubusercontent.com',
+            ),
+            companion.allowed_origins,
+        )
 
 
 if __name__ == '__main__':

@@ -12,6 +12,18 @@ records exact source/APK review, owner-reported repaired rootless boot and the
 remaining runtime limits. Each microG profile's API must match the authenticated
 source and every verified output archive's `post-sdk-level`.
 
+## ModOS Companion variant
+
+`locks/microg-v0.3.17.252432-modos.json` is the same release with one change:
+the Companion (`com.android.vending`) is ModOS's build of the same tag plus its
+list-valued billing flag fix, signed with the owner's key. It is hosted as a
+release asset of this repository. The adapter accepts exactly two Companion
+identities, official (signer `9bd067…14165`, versionCode 84022634) or ModOS
+(signer `d30b31…0bef`, versionCode 84022635). Services must always carry the
+official signer. A ROM using the ModOS Companion also needs ModOS's
+`MICROG_SPOOF_PATCH`, because LineageOS only spoofs signatures for the official
+microG certificate.
+
 ## Reviewed release
 
 The checked-in lock pins microG `v0.3.17.252432`:

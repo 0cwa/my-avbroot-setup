@@ -24,6 +24,11 @@ enforced_by = 'adapter'
 type = 'apk-signer-sha256'
 value = '9bd06727e62796c0130eb6dab39b73157451582cbd138e86c468acc395d14165'
 
+# ModOS test key; accepted only for the Companion (see lib/modules/microg.py).
+[[verification.trust_roots]]
+type = 'apk-signer-sha256'
+value = 'd30b31d91ed58e786f03f266d9b8fc7a6b22f388b0d632aab563c0f3cdc90bef'
+
 [compatibility]
 root_modes = ['rootless', 'rooted']
 architectures = ['any']
