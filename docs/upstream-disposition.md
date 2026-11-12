@@ -1,6 +1,8 @@
-# Upstream disposition — per-hunk decomposition of the `master` delta
+# Upstream disposition — historical per-hunk decomposition
 
 > **Authoritative copy.** This document lives in the fork repo because it describes *this repo's* delta against upstream. PixeneOS links here from `docs/tickets/ROMCOMPAT-1.md`, `docs/tickets/META-3.md`, and `docs/planning/decisions/ADR-0002-compatible-fork-of-my-avbroot-setup.md`.
+
+> **Historical snapshot.** The counts and hunk baseline below are from 2026-07-18. For the current comparison against immutable upstream `394725b276a585bc93443dd49438b5ad3ae93588`, see [`upstream-maintenance.md`](./upstream-maintenance.md).
 
 ## Rebase status — 2026-07-18
 

@@ -6,6 +6,16 @@ This fork tracks [`chenxiaolong/my-avbroot-setup`](https://github.com/chenxiaolo
 
 Carry the minimum diff against upstream that still lets PixeneOS ship a working LineageOS / non-Pixel ROM build. Promote hunks upstream when upstream is willing to take them; keep the rest as a small, rebase-able patchset.
 
+## Current status — 2026-11-12
+
+The strategy above remains the intended direction, but the historical branch
+and line counts below no longer describe the current fork. Compare against the
+immutable upstream base `394725b276a585bc93443dd49438b5ad3ae93588` using the
+commands and current dispositions in [`upstream-maintenance.md`](./upstream-maintenance.md).
+Do not merge upstream as part of consumer cleanup. Keep generic helper changes
+separate from PixeneOS catalog, trust, and device policy, and promote generic
+work only on a dedicated topic branch after authorization.
+
 ## Branch layout
 
 | Branch | Role | Rebase policy |

@@ -53,10 +53,13 @@ There are three adapter kinds:
   method uses that argument only as a presence check.
 
 The catalog-legacy wrapper does not infer that environment-variable paths are
-the artifacts represented by the lock. A consumer using environment-backed
-adapters must derive those paths from the verified context's artifact handles
-or retain its independent verification before injection. A locked selection
-provides module identity/version, profile and ROM scope, lock digest, selection
+the artifacts represented by the lock. An adapter can instead read its
+payloads through the verified context's artifact handles; ModOS's current
+Shizuku and exFAT catalog adapters use that path and validate their artifact
+IDs, roles, digests, and sizes. A consumer that retains environment-backed
+payload paths must keep those paths bound to verified artifact bytes or retain
+its independent verification before injection. A locked selection provides
+module identity/version, profile and ROM scope, lock digest, selection
 fingerprint, compatibility decision, trusted signers, and verified artifact
 handles. A class still needs to enforce any runtime preconditions in its
 `requirements()` and `inject()` methods.
