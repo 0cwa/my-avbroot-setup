@@ -112,6 +112,8 @@ def _catalog_legacy_wrapper(adapter_id: str, adapter_class: type[Any]) -> type[A
             ))
             if not isinstance(self.adapter, adapter_class):
                 raise ExtensionError('catalog legacy factory returned an invalid adapter')
+            # The delegated adapter, not only this wrapper, consumes artifacts.
+            self.adapter.context = context
 
         def requirements(self):
             return self.adapter.requirements()

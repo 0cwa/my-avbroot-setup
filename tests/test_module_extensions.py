@@ -118,7 +118,7 @@ def _module_class():
                 raise MissingArgs()
             return cls()
         def requirements(self): return ModuleRequirements(set(), set(), False)
-        def inject(self, boot_fs, ext_fs, sepolicies, compatible_sepolicy=False): return 'injected'
+        def inject(self, boot_fs, ext_fs, sepolicies, compatible_sepolicy=False): return self.context.module_id
     return ExistingAdapter
 '''
         with tempfile.TemporaryDirectory() as temporary:
@@ -146,7 +146,8 @@ digest_required = true
             adapter = extension.locked_factories['shizuku-fixture'](
                 SimpleNamespace(module_id='shizuku-fixture')
             )
-            self.assertEqual('injected', adapter.inject({}, {}, []))
+            self.assertEqual('shizuku-fixture', adapter.inject({}, {}, []))
+            self.assertIs(adapter.context, adapter.adapter.context)
             self.assertEqual('shizuku-fixture', extension.legacy_modules[0].NAME)
 
 
