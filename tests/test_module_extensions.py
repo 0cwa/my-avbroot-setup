@@ -8,10 +8,11 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 import tomlkit
 
-from lib.modules.extensions import load_adapter_extension
+from lib.modules.extensions import ExtensionError, load_adapter_extension
 from lib.modules.locks import write_lock
 from lib.modules.verified import construct_locked_adapters
 from tests.test_resolver import lock_for, module, profile
@@ -107,7 +108,10 @@ digest_required = true
     def test_catalog_legacy_factory_is_wrapped_for_locked_context(self) -> None:
         source = '''
 from lib.modules import LegacyCliModule, MissingArgs, ModuleRequirements
+factory_calls = 0
 def _module_class():
+    global factory_calls
+    factory_calls += 1
     class ExistingAdapter(LegacyCliModule):
         NAME = 'shizuku-fixture'
         @classmethod
@@ -149,6 +153,34 @@ digest_required = true
             self.assertEqual('shizuku-fixture', adapter.inject({}, {}, []))
             self.assertIs(adapter.context, adapter.adapter.context)
             self.assertEqual('shizuku-fixture', extension.legacy_modules[0].NAME)
+            self.assertEqual(1, sys.modules[adapter.adapter.__class__.__module__].factory_calls)
+
+
+    def test_boolean_schema_version_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'extension.toml'
+            path.write_text('schema_version = true\ncatalog_directories = []\nadapters = []\n')
+            with self.assertRaises(ExtensionError):
+                load_adapter_extension(path)
+
+    def test_invalid_target_is_rejected_before_import(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'adapter.py').write_text('')
+            path = root / 'extension.toml'
+            path.write_text(tomlkit.dumps({
+                'schema_version': 1, 'catalog_directories': [],
+                'adapters': [{
+                    'id': 'fixture', 'kind': 'locked', 'source': 'adapter.py',
+                    'sha256': hashlib.sha256(b'').hexdigest(), 'target': 'not-a-name!',
+                    'verification_schemes': ['sha256'], 'trusted_signers': [],
+                    'digest_required': True,
+                }],
+            }))
+            with mock.patch('lib.modules.extensions._load_source') as load:
+                with self.assertRaises(ExtensionError):
+                    load_adapter_extension(path)
+                load.assert_not_called()
 
 
 if __name__ == '__main__':

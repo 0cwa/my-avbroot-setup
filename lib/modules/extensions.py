@@ -143,7 +143,7 @@ def load_adapter_extension(path: Path | None) -> AdapterExtension | None:
             'schema_version', 'catalog_directories', 'adapters'
         }:
             raise ValueError('extension must contain only schema_version, catalog_directories, adapters')
-        if raw['schema_version'] != EXTENSION_SCHEMA:
+        if type(raw['schema_version']) is not int or raw['schema_version'] != EXTENSION_SCHEMA:
             raise ValueError(f'unsupported extension schema: {raw["schema_version"]!r}')
         if not isinstance(raw['catalog_directories'], list) or not isinstance(raw['adapters'], list):
             raise ValueError('catalog_directories and adapters must be arrays')
@@ -174,6 +174,9 @@ def load_adapter_extension(path: Path | None) -> AdapterExtension | None:
         if adapter_id in builtin_ids or adapter_id in preflight_ids:
             raise ExtensionError(f'duplicate adapter ID: {adapter_id}')
         preflight_ids.add(adapter_id)
+        target = item['target']
+        if not isinstance(target, str) or not target.isidentifier():
+            raise ExtensionError('adapter target must be a class or factory name')
         if item['kind'] not in ('legacy-cli', 'locked', 'catalog-legacy'):
             raise ExtensionError(f'unknown adapter kind: {item["kind"]!r}')
         if not isinstance(item['verification_schemes'], list) or not all(
@@ -249,12 +252,13 @@ def load_adapter_extension(path: Path | None) -> AdapterExtension | None:
             if kind == 'legacy-cli':
                 continue
 
-        if isinstance(constructor, type):
-            adapter_class = constructor
-        elif callable(constructor):
-            adapter_class = constructor()
-        else:
-            adapter_class = None
+        if kind == 'locked':
+            if isinstance(constructor, type):
+                adapter_class = constructor
+            elif callable(constructor):
+                adapter_class = constructor()
+            else:
+                adapter_class = None
         if not isinstance(adapter_class, type) or not issubclass(adapter_class, Module):
             raise ExtensionError(f'locked adapter is not a Module subclass: {adapter_id}')
         registration = AdapterRegistration(
