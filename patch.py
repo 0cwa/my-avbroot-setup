@@ -253,6 +253,10 @@ def parse_args(argv: list[str] | None = None):
         help='Skip creating Custota csig file and update JSON file',
     )
     parser.add_argument(
+        '--release-url',
+        help='URL recorded in generated update-info JSON (default: output filename)',
+    )
+    parser.add_argument(
         '--adapter-extension',
         type=Path,
         help='Explicit digest-pinned local adapter extension manifest',
@@ -365,6 +369,15 @@ def _patch_output_plans(
         secondary_patch_arg = list(getattr(args, 'secondary_patch_arg', ()))
         plans.append((secondary_output, secondary_patch_arg))
     return tuple(plans)
+
+
+def _generate_update_info(output: Path, release_url: str | None = None) -> None:
+    codename = get_ota_metadata(output)['pre-device']
+    update_info = output.parent / f'{codename}.json'
+    external.generate_update_info(
+        update_info,
+        release_url if release_url is not None else output.name,
+    )
 
 
 def _patch_ota_outputs(
@@ -660,9 +673,7 @@ def _run(
         external.generate_csig(args.output, sign_key_ota, args.sign_cert_ota)
 
         # Generate Custota update-info.
-        codename = get_ota_metadata(args.output)['pre-device']
-        update_info = args.output.parent / f'{codename}.json'
-        external.generate_update_info(update_info, args.output.name)
+        _generate_update_info(args.output, getattr(args, 'release_url', None))
 
     if locked_report is not None:
         write_patch_report(

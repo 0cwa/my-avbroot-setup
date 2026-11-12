@@ -268,6 +268,25 @@ digest_required = true
             modules.SSH_PUBLIC_KEY_CHENXIAOLONG,
         )
 
+    def test_native_release_url_reaches_update_info_generator(self) -> None:
+        output = Path('/fixture-output.zip')
+        with (
+            mock.patch.object(
+                patch_script,
+                'get_ota_metadata',
+                return_value={'pre-device': 'fixture'},
+            ),
+            mock.patch.object(patch_script.external, 'generate_update_info') as generate,
+        ):
+            patch_script._generate_update_info(
+                output,
+                'https://downloads.example/release.zip',
+            )
+        generate.assert_called_once_with(
+            Path('/fixture.json'),
+            'https://downloads.example/release.zip',
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
