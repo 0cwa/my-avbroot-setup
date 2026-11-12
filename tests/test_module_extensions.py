@@ -108,6 +108,7 @@ digest_required = true
     def test_catalog_legacy_factory_is_wrapped_for_locked_context(self) -> None:
         source = '''
 from lib.modules import LegacyCliModule, MissingArgs, ModuleRequirements
+from lib.modules.report import AdapterPatchResult
 factory_calls = 0
 def _module_class():
     global factory_calls
@@ -122,7 +123,9 @@ def _module_class():
                 raise MissingArgs()
             return cls()
         def requirements(self): return ModuleRequirements(set(), set(), False)
-        def inject(self, boot_fs, ext_fs, sepolicies, compatible_sepolicy=False): return self.context.module_id
+        def inject(self, boot_fs, ext_fs, sepolicies, compatible_sepolicy=False):
+            assert self.context.module_id == self.NAME
+            return AdapterPatchResult(('/system/fixture',))
     return ExistingAdapter
 '''
         with tempfile.TemporaryDirectory() as temporary:
@@ -150,7 +153,7 @@ digest_required = true
             adapter = extension.locked_factories['shizuku-fixture'](
                 SimpleNamespace(module_id='shizuku-fixture')
             )
-            self.assertEqual('shizuku-fixture', adapter.inject({}, {}, []))
+            self.assertEqual(('/system/fixture',), adapter.inject({}, {}, []).injected_paths)
             self.assertIs(adapter.context, adapter.adapter.context)
             self.assertEqual('shizuku-fixture', extension.legacy_modules[0].NAME)
             self.assertEqual(1, sys.modules[adapter.adapter.__class__.__module__].factory_calls)

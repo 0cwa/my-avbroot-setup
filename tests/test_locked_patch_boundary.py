@@ -28,6 +28,7 @@ from lib.modules.locks import (
     write_lock,
 )
 from lib.modules.report import AdapterPatchResult
+from lib.modules.extensions import _catalog_legacy_wrapper
 from lib.modules.verified import (
     construct_locked_adapters,
     open_verified_selection,
@@ -390,12 +391,33 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             )
 
     def test_adapter_is_constructed_before_ota_work_and_report_is_stable(self) -> None:
+        self._exercise_adapter_run()
+
+    def test_catalog_legacy_adapter_reports_through_real_patch_boundary(self) -> None:
+        self._exercise_adapter_run(catalog_legacy=True)
+
+    def test_catalog_legacy_none_result_cannot_generate_output(self) -> None:
+        self._exercise_adapter_run(catalog_legacy=True, missing_report=True)
+
+    def _exercise_adapter_run(self, *, catalog_legacy=False, missing_report=False) -> None:
         events: list[str] = []
 
-        class TestAdapter(modules.Module):
-            def __init__(self, context) -> None:
+        class TestAdapter(modules.LegacyCliModule):
+            NAME = 'locked-test'
+
+            def __init__(self, context=None) -> None:
                 events.append('construct')
                 self.context = context
+
+            @classmethod
+            def add_args(cls, parser):
+                pass
+
+            @classmethod
+            def from_args(cls, args):
+                if getattr(args, 'module_locked_test', None) is None:
+                    raise modules.MissingArgs()
+                return cls()
 
             def requirements(self) -> modules.ModuleRequirements:
                 return modules.ModuleRequirements(set(), set(), False)
@@ -411,6 +433,8 @@ class LockedPatchBoundaryTest(unittest.TestCase):
                 with self.context.artifact('payload').open() as source:
                     if source.read() != self.payload:
                         raise AssertionError('adapter did not receive verified bytes')
+                if missing_report:
+                    return None
                 return AdapterPatchResult(('/system/app/Fixture/Fixture.apk',))
 
         TestAdapter.payload = self.payload
@@ -455,7 +479,8 @@ class LockedPatchBoundaryTest(unittest.TestCase):
             mock.patch.object(
                 patch_script,
                 'locked_adapter_factories',
-                return_value={'locked-test': TestAdapter},
+                return_value={'locked-test': _catalog_legacy_wrapper('locked-test', TestAdapter)
+                              if catalog_legacy else TestAdapter},
             ),
             mock.patch.object(patch_script.modules, 'all_modules', return_value={}),
             mock.patch.object(
@@ -474,6 +499,12 @@ class LockedPatchBoundaryTest(unittest.TestCase):
                 side_effect=patch_ota,
             ),
         ):
+            if missing_report:
+                with self.assertRaisesRegex(RuntimeError, 'did not return a patch result'):
+                    patch_script.run(args, self.root / 'work')
+                self.assertEqual(['construct', 'verify-ota', 'inject'], events)
+                self.assertFalse(report_path.exists())
+                return
             patch_script.run(args, self.root / 'work')
 
         self.assertEqual(

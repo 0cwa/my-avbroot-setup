@@ -66,3 +66,18 @@ handles. A class still needs to enforce any runtime preconditions in its
 
 The helper does not execute installer scripts or infer installer support from
 catalog lifecycle metadata.
+
+## Locked injection reports
+
+A `catalog-legacy` adapter must support the locked injection result contract as
+well as context-aware payload reads. When selected through the catalog, its
+`inject()` must return `lib.modules.report.AdapterPatchResult` containing the
+actual changed or verified-installed Android paths in sorted, unique order.
+The wrapper passes that result through; it does not infer writes or invent an
+empty success result for an older adapter that returns `None`. The patch runner
+rejects a missing result before repacking or generating output.
+
+Filesystem paths in a product image are image-relative. Report them in their
+mounted Android namespace (for example `/product/app/...`). Optional per-path
+statuses must come from actual install results; a file replacement is not a
+newly created file. Legacy CLI selection may retain its prior return behavior.
