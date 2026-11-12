@@ -15,6 +15,8 @@ from lib.modules.locks import (
     load_canonical_lock,
     verify_locked_artifacts,
 )
+from lib.modules.extensions import load_adapter_extension
+from lib.modules.extensions import ExtensionError
 from lib.modules.providers import get_lock_update_provider
 from lib.modules.resolver import ResolutionError, load_profile, resolve_profile
 from lib.modules.registry import MODULE_ID_PATTERN
@@ -113,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resolve.add_argument('--profile', type=Path, required=True)
     _add_lock_argument(resolve)
+    resolve.add_argument(
+        '--adapter-extension',
+        type=Path,
+        help='Explicit digest-pinned local adapter extension manifest',
+    )
     resolve.add_argument('--format', choices=('text', 'json'), default='text')
     return parser
 
@@ -188,9 +195,24 @@ def _dispatch(args: argparse.Namespace) -> None:
         )
         print(json.dumps(result.as_dict(), indent=2, sort_keys=True) + '\n', end='')
     elif args.command == 'resolve':
+        extension = load_adapter_extension(args.adapter_extension)
         lock, lock_sha256 = load_canonical_lock(args.lock)
+        registrations = None
+        additional_directories = ()
+        if extension is not None:
+            from lib.modules.registry import INTERNAL_ADAPTERS, LOCKED_ADAPTERS
+
+            registrations = (
+                INTERNAL_ADAPTERS
+                + LOCKED_ADAPTERS
+                + extension.catalog_registrations
+            )
+            additional_directories = extension.catalog_directories
         resolution = resolve_profile(
-            load_catalog(),
+            load_catalog(
+                **({'registrations': registrations} if registrations is not None else {}),
+                additional_directories=additional_directories,
+            ),
             load_profile(args.profile),
             lock,
             lock_sha256,
@@ -206,7 +228,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         _dispatch(args)
-    except (ArchiveError, CatalogError, LockError, ResolutionError) as error:
+    except (ArchiveError, CatalogError, ExtensionError, LockError, ResolutionError) as error:
         parser.error(str(error))
 
 

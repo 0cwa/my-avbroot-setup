@@ -841,6 +841,7 @@ def load_catalog(
     registrations: Sequence[AdapterRegistration] = (
         INTERNAL_ADAPTERS + LOCKED_ADAPTERS
     ),
+    additional_directories: Sequence[Path] = (),
 ) -> ModuleCatalog:
     registration_by_id: dict[str, AdapterRegistration] = {}
     for registration in registrations:
@@ -854,7 +855,11 @@ def load_catalog(
             )
         registration_by_id[registration.id] = registration
 
-    paths = sorted(directory.glob('*.toml'), key=lambda path: path.name)
+    paths = sorted(
+        (path for source in (directory, *additional_directories)
+         for path in source.glob('*.toml')),
+        key=lambda path: (path.stem, str(path)),
+    )
     if not paths:
         raise CatalogError(f'No module manifests found in: {directory}')
 

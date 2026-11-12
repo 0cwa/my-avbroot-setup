@@ -25,6 +25,7 @@ from lib.modules.registry import (
     locked_adapter_factories,
 )
 from lib.modules.catalog import load_catalog
+from lib.modules.extensions import load_adapter_extension
 from lib.modules.report import (
     AdapterPatchResult,
     build_patch_report,
@@ -144,7 +145,15 @@ def _require_microg_ota_api(
                 actual_api, ota)
 
 
-def parse_args():
+def parse_args(argv: list[str] | None = None):
+    extension_parser = argparse.ArgumentParser(add_help=False)
+    extension_parser.add_argument('--adapter-extension', type=Path)
+    extension_probe, _ = extension_parser.parse_known_args(argv)
+    try:
+        adapter_extension = load_adapter_extension(extension_probe.adapter_extension)
+    except ValueError as error:
+        extension_parser.error(str(error))
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--input',
@@ -244,6 +253,11 @@ def parse_args():
         help='Skip creating Custota csig file and update JSON file',
     )
     parser.add_argument(
+        '--adapter-extension',
+        type=Path,
+        help='Explicit digest-pinned local adapter extension manifest',
+    )
+    parser.add_argument(
         '--compatible-sepolicy',
         action='store_true',
         help='Change sepolicy files to allow patching other selinux partitions and don\'t fail if selinux is missing.',
@@ -258,7 +272,7 @@ def parse_args():
         ),
     )
 
-    for module_type in modules.all_modules():
+    for module_type in _module_types(adapter_extension):
         module_type.add_args(parser)
 
     # Keep this separate from the legacy per-module options above.  Locked
@@ -284,7 +298,8 @@ def parse_args():
         help='Atomic deterministic report for locked adapter injection',
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    args.adapter_extension_data = adapter_extension
 
     raw_tool_runner_prefix = args._tool_runner_prefix_json
     del args._tool_runner_prefix_json
@@ -332,6 +347,13 @@ def parse_args():
             '--patch-report must be supplied together'
         )
     return args
+
+
+def _module_types(adapter_extension):
+    return [
+        *modules.all_modules(),
+        *(adapter_extension.legacy_modules if adapter_extension else ()),
+    ]
 
 
 def _patch_output_plans(
@@ -388,8 +410,11 @@ def _run(
     need_boot_fs: set[str] = set()
     need_ext_fs: set[str] = set()
     need_sepolicies = False
+    locked_module_ids = {module_id for module_id, _ in locked_adapters}
 
-    for module_type in modules.all_modules():
+    for module_type in _module_types(getattr(args, 'adapter_extension_data', None)):
+        if module_type.NAME in locked_module_ids:
+            continue
         try:
             module = module_type.from_args(args)
         except modules.MissingArgs:
@@ -665,7 +690,15 @@ def run(args: argparse.Namespace, temp_dir: Path):
     if getattr(args, 'module_lock', None) is None:
         return _run(args, temp_dir, None, ())
 
-    catalog = load_catalog(registrations=INTERNAL_ADAPTERS + LOCKED_ADAPTERS)
+    extension = getattr(args, 'adapter_extension_data', None)
+    catalog = load_catalog(
+        registrations=(
+            INTERNAL_ADAPTERS
+            + LOCKED_ADAPTERS
+            + (extension.catalog_registrations if extension else ())
+        ),
+        additional_directories=(extension.catalog_directories if extension else ()),
+    )
     selection = open_verified_selection(
         catalog,
         args.module_lock,
@@ -675,7 +708,10 @@ def run(args: argparse.Namespace, temp_dir: Path):
     with selection:
         adapters = construct_locked_adapters(
             selection,
-            locked_adapter_factories(),
+            {
+                **locked_adapter_factories(),
+                **(extension.locked_factories if extension else {}),
+            },
         )
         return _run(args, temp_dir, selection, adapters)
 

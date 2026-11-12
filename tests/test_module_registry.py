@@ -3,10 +3,12 @@
 
 import argparse
 from contextlib import redirect_stdout
+import hashlib
 import io
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -27,6 +29,8 @@ from lib.modules.registry import (
     module_argument_dest,
 )
 import patch as patch_script
+from lib.modules.extensions import ExtensionError, load_adapter_extension
+from lib.modules.verified import construct_locked_adapters
 
 
 EXPECTED_MODULES = [
@@ -131,6 +135,123 @@ class ModuleRegistryTest(unittest.TestCase):
 
     def test_hyphenated_locked_id_has_a_safe_destination(self) -> None:
         self.assertEqual('module_test_module', module_argument_dest('test-module'))
+
+    def test_explicit_extension_constructs_locked_adapter_without_registry_mutation(self) -> None:
+        source = '''
+from lib.modules import Module, ModuleRequirements
+class FixtureAdapter(Module):
+    def __init__(self, context): self.context = context
+    def requirements(self): return ModuleRequirements(set(), set(), False)
+    def inject(self, boot_fs, ext_fs, sepolicies, compatible_sepolicy=False): return None
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter_path = root / 'adapter.py'
+            adapter_path.write_text(source, encoding='UTF-8')
+            digest = hashlib.sha256(adapter_path.read_bytes()).hexdigest()
+            extension_path = root / 'extension.toml'
+            extension_path.write_text(
+                f'''schema_version = 1
+catalog_directories = []
+
+[[adapters]]
+id = 'fixture-adapter'
+kind = 'locked'
+source = 'adapter.py'
+sha256 = '{digest}'
+target = 'FixtureAdapter'
+verification_schemes = ['sha256']
+trusted_signers = []
+digest_required = true
+''',
+                encoding='UTF-8',
+            )
+            extension = load_adapter_extension(extension_path)
+            self.assertIsNotNone(extension)
+            self.assertEqual(EXPECTED_MODULES, [module.NAME for module in modules.all_modules()])
+            selection = mock.Mock()
+            selection.contexts = [mock.Mock(module_id='fixture-adapter')]
+            built = construct_locked_adapters(selection, extension.locked_factories)
+            self.assertEqual(['fixture-adapter'], [module_id for module_id, _ in built])
+            self.assertEqual('fixture-adapter', built[0][1].context.module_id)
+
+    def test_extension_hash_fails_before_module_code_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / 'imported'
+            source_path = root / 'adapter.py'
+            source_path.write_text(
+                f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+                encoding='UTF-8',
+            )
+            extension_path = root / 'extension.toml'
+            extension_path.write_text(
+                '''schema_version = 1
+catalog_directories = []
+[[adapters]]
+id = 'fixture-adapter'
+kind = 'locked'
+source = 'adapter.py'
+sha256 = '0000000000000000000000000000000000000000000000000000000000000000'
+target = 'FixtureAdapter'
+verification_schemes = ['sha256']
+trusted_signers = []
+digest_required = true
+''',
+                encoding='UTF-8',
+            )
+            with self.assertRaisesRegex(ExtensionError, 'digest mismatch'):
+                load_adapter_extension(extension_path)
+            self.assertFalse(marker.exists())
+
+    def test_legacy_extension_factory_adds_only_explicit_consumer_arguments(self) -> None:
+        source = '''
+def _module_class():
+    import argparse
+    from lib.modules import LegacyCliModule, MissingArgs, ModuleRequirements
+    class ConsumerModule(LegacyCliModule):
+        NAME = 'consumer-fixture'
+        @classmethod
+        def add_args(cls, parser): parser.add_argument('--module-consumer-fixture')
+        @classmethod
+        def from_args(cls, args): raise MissingArgs()
+        def requirements(self): return ModuleRequirements(set(), set(), False)
+        def inject(self, boot_fs, ext_fs, sepolicies, compatible_sepolicy=False): return None
+    return ConsumerModule
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_path = root / 'adapter.py'
+            source_path.write_text(source, encoding='UTF-8')
+            digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+            extension_path = root / 'extension.toml'
+            extension_path.write_text(
+                f'''schema_version = 1
+catalog_directories = []
+[[adapters]]
+id = 'consumer-fixture'
+kind = 'legacy-cli'
+source = 'adapter.py'
+sha256 = '{digest}'
+target = '_module_class'
+verification_schemes = ['sha256']
+trusted_signers = []
+digest_required = true
+''',
+                encoding='UTF-8',
+            )
+            output = io.StringIO()
+            with (
+                mock.patch.object(sys, 'argv', [
+                    'patch.py', '--adapter-extension', str(extension_path), '--help'
+                ]),
+                redirect_stdout(output),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                patch_script.parse_args()
+            self.assertEqual(0, raised.exception.code)
+            self.assertIn('--module-consumer-fixture', output.getvalue())
+            self.assertEqual(EXPECTED_MODULES, [module.NAME for module in modules.all_modules()])
 
     def test_legacy_signature_defaults_to_zip_dot_sig(self) -> None:
         args = argparse.Namespace(
