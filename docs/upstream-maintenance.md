@@ -14,11 +14,17 @@ As of 2026-11-12, compare this branch with immutable upstream commit
 2026-11-04). That commit is the upstream master used by the current helper pin
 and by this cleanup. No upstream merge or rebase was performed.
 
+At cleanup snapshot `a1e977b47ca0ad513b2ca0cab51f6c225ec9d3e4`, the fork had
+159 commits after this upstream base and no upstream-only commits; the tree
+comparison was 103 files changed, 21,696 insertions, and 221 deletions. This
+is the dated comparison for the cleanup snapshot, not a promise that later
+consumer or fork work leaves those figures unchanged.
+
 Reproduce the commit and tree comparison with:
 
 ```sh
-git rev-list --count 394725b276a585bc93443dd49438b5ad3ae93588..HEAD
-git diff --shortstat 394725b276a585bc93443dd49438b5ad3ae93588..HEAD
+git rev-list --count 394725b276a585bc93443dd49438b5ad3ae93588..a1e977b47ca0ad513b2ca0cab51f6c225ec9d3e4
+git diff --shortstat 394725b276a585bc93443dd49438b5ad3ae93588 a1e977b47ca0ad513b2ca0cab51f6c225ec9d3e4
 ```
 
 The compatible-fork strategy's older "about 21 commits" and `+594 / -175`
