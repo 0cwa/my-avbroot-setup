@@ -72,17 +72,20 @@ def _safe_path(base: Path, value: object, label: str) -> Path:
 def _load_source(path: Path, digest: object, module_key: str) -> ModuleType:
     if not isinstance(digest, str) or not SHA256_PATTERN.fullmatch(digest):
         raise ExtensionError('adapter source digest must be lowercase SHA-256')
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    source = path.read_bytes()
+    actual = hashlib.sha256(source).hexdigest()
     if actual != digest:
         raise ExtensionError(f'adapter source digest mismatch: {path.name}')
     spec = importlib.util.spec_from_file_location(module_key, path)
     if spec is None or spec.loader is None:
         raise ExtensionError(f'adapter source cannot be imported: {path.name}')
     module = importlib.util.module_from_spec(spec)
-    # Publish only after the digest check, before execution for normal import semantics.
+    # Execute the same bytes that were hashed so a file swap between checking
+    # and import cannot substitute different adapter code.
     sys.modules[module_key] = module
     try:
-        spec.loader.exec_module(module)
+        code = compile(source, str(path), 'exec')
+        exec(code, module.__dict__)
     except Exception:
         sys.modules.pop(module_key, None)
         raise
